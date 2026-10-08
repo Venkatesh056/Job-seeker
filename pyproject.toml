@@ -1,0 +1,64 @@
+[project]
+name = "careeragent"
+version = "0.1.0"
+description = "AI Career Agent — personal job search and application assistant"
+requires-python = ">=3.12,<3.15"
+dynamic = ["dependencies"]
+
+[project.scripts]
+careeragent = "careeragent.cli:main"
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[tool.setuptools.packages.find]
+where = ["backend"]
+
+[tool.pytest.ini_options]
+pythonpath = ["backend"]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+# Live tests are excluded by default: a red suite must mean our code broke,
+# not that someone else's API had a bad minute. Run them with: pytest -m live
+addopts = "-q --strict-markers -m 'not live' --timeout=60"
+markers = [
+    # Live tests call real third-party APIs. They are excluded by default:
+    #   pytest -m live
+    # Never in CI — a red build should mean our code broke, not that someone
+    # else's API had a bad minute.
+    "live: hits real external endpoints",
+    # Browser tests replay recorded form fixtures offline in real Chromium.
+    # They need `playwright install chromium` but never touch the network.
+    "browser: drives a real browser over local fixtures",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["backend"]
+# The virtualenv lives in the project directory, so `ruff check .` walked into it and
+# reported on pdfminer's console scripts — and `ruff format .` rewrote them. Third-party
+# code is not ours to lint or reformat.
+extend-exclude = ["job", ".venv", "venv", "data", "backend/migrations/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "RUF"]
+ignore = [
+    "E501",    # line length is handled by the formatter
+    "B008",    # typer uses function calls in argument defaults by design
+    "RUF001",  # en-dashes and arrows in prose are deliberate
+    "RUF002",  # ...including the box-drawing graph diagrams in module docstrings
+    "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"backend/careeragent/models/*" = ["RUF012"]
+"tests/*" = ["B018"]
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "backend"
+plugins = ["pydantic.mypy"]
+warn_unused_ignores = true
+warn_redundant_casts = true
+ignore_missing_imports = true

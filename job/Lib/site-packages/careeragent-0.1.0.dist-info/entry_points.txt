@@ -1,0 +1,2 @@
+[console_scripts]
+careeragent = careeragent.cli:main

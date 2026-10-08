@@ -1,0 +1,189 @@
+<!doctype html>
+<!--
+  A recorded-shape Greenhouse application form, reduced to the control types
+  that matter and stripped of anything identifying.
+
+  Replayed offline in CI. Nothing here touches the network, and the tripwire in
+  test_browser_runner.py asserts the submit button is never activated: a test
+  suite that could submit a real application is not a test suite worth having.
+
+  Includes the awkward cases on purpose:
+    * a select whose first option is a disabled placeholder
+    * a select whose placeholder carries a sentinel value but a plain label
+    * a legitimate "0-1 years" option with value="0" at index 0
+    * a combobox that expands what you type
+    * demographic and sponsorship questions that must never be auto-filled
+    * a required field with no attribute, marked only by an asterisk
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>Apply — ML Engineer at Acme</title></head>
+<body data-board-token="acme">
+<div id="grnhse_app">
+  <h1>Apply for ML Engineer</h1>
+  <form id="application-form">
+
+    <div class="field">
+      <label for="first_name">First Name *</label>
+      <input id="first_name" name="first_name" type="text" required>
+    </div>
+
+    <div class="field">
+      <label for="last_name">Last Name *</label>
+      <input id="last_name" name="last_name" type="text" required>
+    </div>
+
+    <div class="field">
+      <label for="email">Email *</label>
+      <input id="email" name="email" type="email" required>
+    </div>
+
+    <div class="field">
+      <label for="phone">Phone</label>
+      <input id="phone" name="phone" type="tel">
+    </div>
+
+    <div class="field">
+      <label for="resume">Resume/CV *</label>
+      <input id="resume" name="resume" type="file" required>
+    </div>
+
+    <div class="field">
+      <label for="linkedin">LinkedIn Profile</label>
+      <input id="linkedin" name="linkedin" type="url">
+    </div>
+
+    <div class="field">
+      <label for="github">GitHub URL</label>
+      <input id="github" name="github" type="url">
+    </div>
+
+    <!-- Placeholder is a disabled first option: the structural idiom. -->
+    <div class="field">
+      <label for="country">Country *</label>
+      <select id="country" name="country" required>
+        <option value="" disabled selected>Select...</option>
+        <option value="in">India</option>
+        <option value="us">United States</option>
+      </select>
+    </div>
+
+    <!-- Placeholder carries a sentinel value but an ordinary-looking label. -->
+    <div class="field">
+      <label for="referral">How did you hear about us? *</label>
+      <select id="referral" name="referral" required>
+        <option value="none">Pick one</option>
+        <option value="job_board">Job board</option>
+        <option value="friend">Friend</option>
+      </select>
+    </div>
+
+    <!-- value="0" at index 0 is a REAL answer and must not be read as a placeholder. -->
+    <div class="field">
+      <label for="yoe">Years of experience *</label>
+      <select id="yoe" name="yoe" required>
+        <option value="0" selected>0-1 years</option>
+        <option value="2">2-4 years</option>
+        <option value="5">5+ years</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="location">Current location *</label>
+      <input id="location" name="location" type="text" role="combobox"
+             aria-autocomplete="list" aria-controls="location-listbox"
+             placeholder="Start typing..." required>
+      <ul id="location-listbox" role="listbox" hidden></ul>
+    </div>
+
+    <!-- Required by convention only: asterisk in the label, no attribute. -->
+    <div class="field">
+      <label for="why">Why do you want to work at Acme? *</label>
+      <textarea id="why" name="why" rows="4"></textarea>
+    </div>
+
+    <div class="field">
+      <label for="cover_letter">Cover Letter</label>
+      <input id="cover_letter" name="cover_letter" type="file">
+    </div>
+
+    <!-- Everything below must never be auto-filled. -->
+    <fieldset>
+      <legend>Will you now or in the future require visa sponsorship? *</legend>
+      <label><input type="radio" name="sponsorship" value="yes" required> Yes</label>
+      <label><input type="radio" name="sponsorship" value="no"> No</label>
+    </fieldset>
+
+    <div class="field">
+      <label for="gender">Gender</label>
+      <select id="gender" name="gender">
+        <option value="" selected>Select...</option>
+        <option value="f">Female</option>
+        <option value="m">Male</option>
+        <option value="d">Decline to self-identify</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="veteran">Veteran Status</label>
+      <select id="veteran" name="veteran">
+        <option value="" selected>Select...</option>
+        <option value="y">I am a protected veteran</option>
+        <option value="n">I am not a protected veteran</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="disability">Disability Status</label>
+      <select id="disability" name="disability">
+        <option value="" selected>Select...</option>
+        <option value="y">Yes</option>
+        <option value="n">No</option>
+      </select>
+    </div>
+
+    <button type="submit" id="submit_app">Submit Application</button>
+  </form>
+</div>
+
+<script>
+  // Tripwire. The test asserts this stays at 0: a replay that submits is a bug
+  // in the runner, and this is how it gets caught rather than discovered later.
+  window.__submitActivations = 0;
+  document.getElementById('application-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    window.__submitActivations += 1;
+  });
+  document.getElementById('submit_app').addEventListener('click', () => {
+    window.__submitActivations += 1;
+  });
+
+  // A combobox that behaves like the real ones: typing opens a listbox, and
+  // the value is only committed by CLICKING an option. It also expands what you
+  // typed, so the caller has to read back rather than assume.
+  const loc = document.getElementById('location');
+  const listbox = document.getElementById('location-listbox');
+  const PLACES = [
+    'Bangalore, Karnataka, India',
+    'Bangui, Central African Republic',
+    'Chennai, Tamil Nadu, India',
+  ];
+  loc.addEventListener('input', () => {
+    const query = loc.value.trim().toLowerCase();
+    listbox.innerHTML = '';
+    if (!query) { listbox.hidden = true; return; }
+    const hits = PLACES.filter((p) => p.toLowerCase().startsWith(query.split(',')[0]));
+    for (const place of hits) {
+      const item = document.createElement('li');
+      item.setAttribute('role', 'option');
+      item.textContent = place;
+      item.addEventListener('click', () => {
+        loc.value = place;
+        listbox.hidden = true;
+      });
+      listbox.appendChild(item);
+    }
+    listbox.hidden = hits.length === 0;
+  });
+</script>
+</body>
+</html>

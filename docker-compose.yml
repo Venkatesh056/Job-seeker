@@ -1,0 +1,63 @@
+# Local infrastructure for AI Career Agent.
+#
+#   docker compose up -d          start
+#   docker compose ps             check
+#   docker compose down           stop (data survives)
+#   docker compose down -v        stop and delete all data
+#
+# Nothing here is required to run the agent: it defaults to SQLite and falls
+# back to an in-memory cache. Compose is the upgrade path to pgvector-backed
+# semantic search, not a prerequisite.
+#
+# NOTE ON PORTS: Postgres is published on 5433, not 5432. This machine already
+# runs a native PostgreSQL 18 service on 5432 and that is left alone.
+
+services:
+  db:
+    # pgvector/pgvector ships the vector extension already compiled. Building it
+    # against a native Windows Postgres install is the thing this avoids.
+    image: pgvector/pgvector:pg17
+    container_name: careeragent-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: careeragent
+      POSTGRES_PASSWORD: careeragent
+      POSTGRES_DB: careeragent
+      # Local-only service; scram is still better than trust.
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+    ports:
+      - "5433:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./infra/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # Without a healthcheck, migrations race the server's first start and fail
+      # on a connection refused that looks like a config error.
+      test: ["CMD-SHELL", "pg_isready -U careeragent -d careeragent"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  redis:
+    image: redis:8-alpine
+    container_name: careeragent-redis
+    restart: unless-stopped
+    # Cache and pub/sub only — never the source of truth, so eviction under
+    # memory pressure is correct behaviour rather than data loss.
+    command: >
+      redis-server
+      --save ""
+      --appendonly no
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  db_data:

@@ -1,0 +1,3510 @@
+<!doctype html>
+<!--
+  AI Career Agent dashboard.
+
+  A single self-contained page served by FastAPI: no build step, no node_modules, no
+  separate dev server. The architecture doc specifies Next.js, and that is still right
+  once several people maintain several screens — but a page you can open by starting
+  one process beats a toolchain you have to keep working before you can look at a job
+  listing.
+
+  Two things in here are load-bearing rather than decorative:
+
+    * The approval screen shows `never_filled` as prominently as `filled`. What the
+      agent refused to answer is the more important half: it is the list of questions
+      that are yours, and a dashboard that hid it would be inviting blind approval.
+
+    * Every rate is rendered with its sample size, and a rate the backend marked
+      unreportable is shown as "3/7" rather than "43%". A percentage on seven
+      applications will change how someone spends their month.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Career Agent</title>
+<style>
+  :root {
+    --bg: #0f1117; --panel: #171a23; --panel-2: #1e222d; --line: #2a2f3d;
+    --text: #e6e9ef; --dim: #9aa3b2; --faint: #6b7280;
+    --accent: #5b8cff; --good: #3fb950; --warn: #d29922; --bad: #f85149;
+    --cyan: #39c5cf; --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; z-index: 30;
+  }
+  header h1 { font-size: 16px; margin: 0 14px 0 0; font-weight: 650; letter-spacing: -.01em; }
+  .pill {
+    font-size: 12px; padding: 3px 9px; border-radius: 999px;
+    background: var(--panel-2); color: var(--dim); border: 1px solid var(--line);
+  }
+  .pill.ok { color: var(--good); border-color: #1d4429; }
+  .pill.warn { color: var(--warn); border-color: #4a3b12; }
+  .pill.bad { color: var(--bad); border-color: #5c2626; }
+  nav {
+    display: flex; gap: 2px; flex-wrap: wrap; padding: 0 16px;
+    background: var(--panel); border-bottom: 1px solid var(--line);
+    position: sticky; top: 53px; z-index: 29;
+  }
+  nav button {
+    background: none; border: none; border-bottom: 2px solid transparent;
+    color: var(--dim); font: inherit; font-size: 13px; font-weight: 500;
+    padding: 10px 13px; cursor: pointer; border-radius: 0;
+  }
+  nav button:hover { color: var(--text); }
+  nav button[aria-current=page] { color: var(--text); border-bottom-color: var(--accent); }
+  nav button .badge {
+    display: inline-block; min-width: 17px; margin-left: 6px; padding: 0 5px;
+    border-radius: 999px; background: var(--accent); color: #fff;
+    font-size: 11px; font-weight: 700; text-align: center;
+  }
+  nav button .badge.quiet { background: var(--line); color: var(--dim); }
+  main { max-width: 1300px; margin: 0 auto; padding: 18px 20px 60px; }
+  .page { display: none; }
+  .page.active { display: block; }
+  .grid { display: grid; grid-template-columns: 340px 1fr; gap: 18px; align-items: start; }
+  .grid.wide { grid-template-columns: 1fr 1fr; }
+  @media (max-width: 1000px) { .grid, .grid.wide { grid-template-columns: 1fr; } }
+  section {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); margin-bottom: 18px; overflow: hidden;
+  }
+  section > h2 {
+    margin: 0; padding: 12px 16px; font-size: 13px; font-weight: 600;
+    letter-spacing: .03em; text-transform: uppercase; color: var(--dim);
+    border-bottom: 1px solid var(--line); background: var(--panel-2);
+    display: flex; align-items: center; gap: 10px;
+  }
+  section > h2 .right { margin-left: auto; font-size: 11px; text-transform: none; letter-spacing: 0; }
+  .body { padding: 16px; }
+  .body.flush { padding: 0; }
+  label { display: block; font-size: 12px; color: var(--dim); margin: 12px 0 5px; }
+  label:first-child { margin-top: 0; }
+  input[type=text], input[type=number], select, textarea {
+    width: 100%; padding: 8px 10px; background: var(--bg); color: var(--text);
+    border: 1px solid var(--line); border-radius: 7px; font: inherit;
+  }
+  textarea { min-height: 110px; resize: vertical; font-size: 13px; }
+  input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .row { display: flex; gap: 10px; }
+  .row > * { flex: 1; min-width: 0; }
+  .check { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 13px; }
+  .check input { width: auto; }
+  button {
+    font: inherit; font-weight: 600; padding: 8px 13px; border-radius: 8px;
+    border: 1px solid var(--accent); background: var(--accent); color: #fff; cursor: pointer;
+  }
+  button:hover:not(:disabled) { filter: brightness(1.1); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.ghost { background: transparent; color: var(--dim); border-color: var(--line); }
+  button.danger { background: transparent; color: var(--bad); border-color: #5c2626; }
+  button.go { background: var(--good); border-color: var(--good); }
+  button.small { padding: 4px 9px; font-size: 12px; font-weight: 500; }
+  .full { width: 100%; margin-top: 16px; }
+  .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th {
+    text-align: left; padding: 9px 12px; color: var(--dim); font-weight: 600;
+    font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+    border-bottom: 1px solid var(--line); background: var(--panel-2);
+  }
+  td { padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  tbody tr:hover td { background: var(--panel-2); }
+  .num { font-variant-numeric: tabular-nums; }
+  .score { font-variant-numeric: tabular-nums; font-weight: 700; }
+  .s-hi { color: var(--good); } .s-mid { color: var(--warn); } .s-lo { color: var(--faint); }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .muted { color: var(--dim); font-size: 12px; }
+  .tiny { color: var(--faint); font-size: 11px; }
+  .stats { display: flex; flex-wrap: wrap; gap: 8px; padding: 14px 16px; }
+  .stat {
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+    padding: 9px 13px; min-width: 96px;
+  }
+  .stat b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
+  .stat span { font-size: 11px; color: var(--dim); }
+  .stat.attn { border-color: #4a3b12; }
+  .stat.attn b { color: var(--warn); }
+  #log {
+    font: 12px/1.65 ui-monospace, "Cascadia Code", Consolas, monospace;
+    max-height: 320px; overflow-y: auto; padding: 12px 16px; margin: 0;
+  }
+  #log div { display: flex; gap: 10px; }
+  #log time { color: var(--faint); flex: none; }
+  #log .l-warn { color: var(--warn); }
+  #log .l-error { color: var(--bad); }
+  .notice {
+    margin: 0 0 18px; padding: 12px 14px; font-size: 13px; border-radius: 9px;
+    background: #14181f; border: 1px solid var(--line); color: var(--dim);
+  }
+  .notice.warn { background: #1d1a10; border-color: #4a3b12; color: #e3c07b; }
+  .notice strong { color: var(--text); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    font-size: 11px; padding: 2px 8px; border-radius: 999px;
+    background: var(--panel-2); border: 1px solid var(--line); color: var(--dim);
+  }
+  .chip.good { color: var(--good); border-color: #1d4429; }
+  .chip.warn { color: var(--warn); border-color: #4a3b12; }
+  .chip.bad { color: var(--bad); border-color: #5c2626; }
+  .chip.cyan { color: var(--cyan); border-color: #14484c; }
+  .drop {
+    border: 1.5px dashed var(--line); border-radius: 9px; padding: 20px 14px;
+    text-align: center; color: var(--dim); cursor: pointer; font-size: 13px;
+  }
+  .drop.over { border-color: var(--accent); color: var(--text); }
+  .err { color: var(--bad); font-size: 12px; margin-top: 10px; }
+  .ok { color: var(--good); font-size: 12px; margin-top: 10px; }
+  .board { display: flex; gap: 12px; overflow-x: auto; padding: 14px 16px; }
+  .col { flex: 0 0 216px; }
+  .col h3 {
+    margin: 0 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+    color: var(--dim); display: flex; gap: 6px;
+  }
+  .card {
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+    padding: 9px 10px; margin-bottom: 7px; font-size: 12px; cursor: pointer;
+  }
+  .card:hover { border-color: var(--accent); }
+  .card b { display: block; font-size: 12.5px; font-weight: 600; }
+  .card .co { color: var(--dim); }
+  .bars { padding: 14px 16px; }
+  .bar { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; font-size: 12px; }
+  .bar .name { flex: 0 0 168px; color: var(--dim); overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; }
+  .bar .track { flex: 1; height: 16px; background: var(--panel-2); border-radius: 4px;
+    border: 1px solid var(--line); overflow: hidden; }
+  .bar .fill { height: 100%; background: var(--accent); }
+  .bar .val { flex: 0 0 92px; text-align: right; font-variant-numeric: tabular-nums; }
+  details { border-top: 1px solid var(--line); }
+  details > summary {
+    padding: 10px 16px; cursor: pointer; font-size: 13px; color: var(--dim);
+  }
+  details > summary:hover { color: var(--text); }
+  details[open] > summary { color: var(--text); }
+  .kv { display: grid; grid-template-columns: 160px 1fr; gap: 5px 12px; font-size: 12.5px; }
+  .kv dt { color: var(--dim); }
+  .kv dd { margin: 0; }
+  .shot { max-width: 100%; border: 1px solid var(--line); border-radius: 8px; margin-top: 10px; }
+  .list { margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; }
+  .list li { margin-bottom: 3px; }
+  .list.bad li { color: #ffb4ab; }
+  .list.warn li { color: #e3c07b; }
+  .list.cyan li { color: #8ed9dd; }
+  .spinner { display: inline-block; width: 11px; height: 11px; border: 2px solid var(--line);
+    border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .modal-bg {
+    position: fixed; inset: 0; background: #0008; backdrop-filter: blur(2px);
+    display: none; align-items: flex-start; justify-content: center; z-index: 60;
+    overflow-y: auto; padding: 40px 16px;
+  }
+  .modal-bg.open { display: flex; }
+  .modal {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    max-width: 820px; width: 100%;
+  }
+  .modal > header { position: static; border-radius: 12px 12px 0 0; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>AI Career Agent</h1>
+  <span class="pill" id="p-candidate">no resume</span>
+  <span class="pill" id="p-jobs">0 jobs</span>
+  <span class="pill" id="p-companies">0 researched</span>
+  <span class="pill" id="p-llm">LLM off</span>
+  <span class="pill" id="p-semantic">semantic off</span>
+  <span class="pill" id="p-autonomy" style="margin-left:auto">autonomy –</span>
+</header>
+
+<nav id="nav"></nav>
+
+<main>
+
+<!-- ══ Overview ══════════════════════════════════════════════════════════ -->
+<div class="page" data-page="overview">
+  <div class="notice" id="overview-notice"></div>
+
+  <section>
+    <h2>Overview</h2>
+    <div class="stats" id="overview-stats"><span class="muted">loading…</span></div>
+  </section>
+
+  <div class="grid">
+    <div>
+      <section>
+        <h2>1 · Your resume</h2>
+        <div class="body">
+          <div class="drop" id="drop">
+            <input type="file" id="file" accept=".pdf,.docx,.txt,.md" hidden>
+            Drop your resume here, or click to choose<br>
+            <span class="tiny">PDF, DOCX, TXT or MD — max 10 MB</span>
+          </div>
+          <div id="upload-result"></div>
+        </div>
+      </section>
+
+      <section>
+        <h2>2 · Search</h2>
+        <div class="body">
+          <label for="command">Say what you want, in words</label>
+          <input type="text" id="command"
+                 placeholder="AI/ML internships in Bangalore posted in the last 3 days">
+          <button class="ghost small" style="margin-top:8px" id="parse-btn">Parse it</button>
+          <div id="parse-result"></div>
+
+          <label for="segment">Where to search</label>
+          <select id="segment"></select>
+
+          <label for="targets">Extra company domains (optional)</label>
+          <input type="text" id="targets" placeholder="zoho.com, postman.com">
+
+          <label for="roles">Target roles</label>
+          <input type="text" id="roles"
+                 value="Data Scientist, Data Analyst, ML Engineer, AI Engineer">
+
+          <label for="locations">Locations</label>
+          <input type="text" id="locations"
+                 value="Bangalore, Bengaluru, Chennai, Coimbatore, Remote, India">
+
+          <div class="row">
+            <div>
+              <label for="experience">Level</label>
+              <select id="experience">
+                <option value="">Any</option>
+                <option value="internship">Internship</option>
+                <option value="entry" selected>Entry / fresher</option>
+                <option value="mid">Mid</option>
+                <option value="senior">Senior</option>
+              </select>
+            </div>
+            <div>
+              <label for="age">Posted within</label>
+              <select id="age">
+                <option value="7">7 days</option>
+                <option value="30" selected>30 days</option>
+                <option value="60">60 days</option>
+                <option value="90">90 days</option>
+              </select>
+            </div>
+          </div>
+
+          <label class="check"><input type="checkbox" id="use-semantic" checked>
+            On-device semantic matching</label>
+          <label class="check"><input type="checkbox" id="use-companies" checked>
+            Research company websites</label>
+          <label class="check"><input type="checkbox" id="use-llm">
+            LLM reasoning <span class="tiny" id="llm-hint"></span></label>
+
+          <button class="full" id="run-btn">Search</button>
+          <div id="run-result"></div>
+        </div>
+      </section>
+    </div>
+
+    <div>
+      <section>
+        <h2>Live activity <span class="right muted" id="sse-state">connecting…</span></h2>
+        <div id="log"><div class="muted">Waiting for the agent to do something…</div></div>
+      </section>
+
+      <section>
+        <h2>Skills costing you applications</h2>
+        <div class="body" id="gaps"><span class="muted">loading…</span></div>
+      </section>
+
+      <section>
+        <h2>Your Fact Bank</h2>
+        <div class="body" id="facts"><span class="muted">loading…</span></div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<!-- ══ Campaign ══════════════════════════════════════════════════════════ -->
+<div class="page active" data-page="campaign">
+  <div class="notice" id="campaign-sources"></div>
+
+  <div class="grid">
+    <div>
+      <section>
+        <h2>1 · Your field</h2>
+        <div class="body" id="detected"><span class="muted">loading…</span></div>
+      </section>
+
+      <section>
+        <h2>2 · Job families</h2>
+        <div class="body">
+          <div id="family-picker"><span class="muted">loading…</span></div>
+          <label class="check"><input type="checkbox" id="include-related" checked>
+            Also search related families</label>
+        </div>
+      </section>
+
+      <section>
+        <h2>3 · Where</h2>
+        <div class="body">
+          <label for="regions">Regions</label>
+          <input type="text" id="regions" value="Bangalore"
+                 placeholder="Bangalore, Chennai, Remote">
+          <div class="chips" style="margin-top:8px" id="region-presets"></div>
+
+          <div class="row" style="margin-top:12px">
+            <div>
+              <label for="c-age">Posted within</label>
+              <select id="c-age">
+                <option value="7">7 days</option>
+                <option value="30" selected>30 days</option>
+                <option value="90">90 days</option>
+              </select>
+            </div>
+            <div>
+              <label for="c-enrich">Resolve ATS for</label>
+              <select id="c-enrich">
+                <option value="30">top 30 companies</option>
+                <option value="60" selected>top 60 companies</option>
+                <option value="120">top 120 companies</option>
+              </select>
+            </div>
+          </div>
+
+          <button class="full" id="campaign-btn">Find companies</button>
+          <div id="campaign-result"></div>
+        </div>
+      </section>
+    </div>
+
+    <div>
+      <section>
+        <h2>Companies
+          <span class="right">
+            <select id="company-filter" style="width:auto;display:inline-block">
+              <option value="applyable">Applyable only</option>
+              <option value="all">All companies</option>
+            </select>
+            <button class="ghost small" id="select-all">Select top 10</button>
+          </span>
+        </h2>
+        <div class="body flush" id="company-list">
+          <p class="body muted">Run a search to see companies hiring in your region.</p>
+        </div>
+      </section>
+
+      <section>
+        <h2>Apply
+          <span class="right" id="selection-count">0 selected</span>
+        </h2>
+        <div class="body">
+          <div class="row">
+            <div>
+              <label for="apply-mode">Mode</label>
+              <select id="apply-mode"></select>
+            </div>
+            <div>
+              <label for="apply-concurrency">At a time</label>
+              <select id="apply-concurrency">
+                <option value="1">1</option>
+                <option value="3" selected>3</option>
+                <option value="5">5</option>
+              </select>
+            </div>
+          </div>
+          <div id="mode-note" class="tiny" style="margin-top:8px"></div>
+          <button class="full go" id="apply-btn" disabled>Apply to selected</button>
+          <div id="apply-result"></div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Agents at work
+          <span class="right">
+            <button class="ghost small" id="batch-refresh">Refresh</button>
+            <button class="danger small" id="batch-stop">Stop</button>
+          </span>
+        </h2>
+        <div class="body flush" id="batch-view">
+          <p class="body muted">No batch running.</p>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<!-- ══ Jobs ══════════════════════════════════════════════════════════════ -->
+<div class="page" data-page="jobs">
+  <section>
+    <h2>Ranked jobs
+      <span class="right">
+        <select id="job-priority" style="width:auto;display:inline-block">
+          <option value="">All priorities</option>
+          <option value="very_high">Very high</option>
+          <option value="high">High</option>
+          <option value="review">Review</option>
+          <option value="low">Low</option>
+        </select>
+        <button class="ghost small" id="jobs-refresh">Refresh</button>
+      </span>
+    </h2>
+    <div class="body flush" id="jobs-table"><p class="body muted">loading…</p></div>
+  </section>
+</div>
+
+<!-- ══ Approval queue ════════════════════════════════════════════════════ -->
+<div class="page" data-page="queue">
+  <div class="notice" id="queue-notice"></div>
+  <section>
+    <h2>Waiting on you <span class="right"><button class="ghost small" id="queue-refresh">Refresh</button></span></h2>
+    <div class="body flush" id="queue-list"><p class="body muted">loading…</p></div>
+  </section>
+  <section>
+    <h2>Held browser sessions</h2>
+    <div class="body" id="sessions"><span class="muted">loading…</span></div>
+  </section>
+</div>
+
+<!-- ══ Tracker ═══════════════════════════════════════════════════════════ -->
+<div class="page" data-page="tracker">
+  <section>
+    <h2>Application tracker <span class="right"><button class="ghost small" id="board-refresh">Refresh</button></span></h2>
+    <div class="board" id="board"><span class="muted">loading…</span></div>
+  </section>
+  <section>
+    <h2>Follow-ups due</h2>
+    <div class="body flush" id="followups"><p class="body muted">loading…</p></div>
+  </section>
+</div>
+
+<!-- ══ Resumes ═══════════════════════════════════════════════════════════ -->
+<div class="page" data-page="resumes">
+  <div class="notice">
+    An archetype is an <strong>ordering over your Fact Bank</strong>, not a separate
+    document. That is why a tailored variant cannot contain anything your master resume
+    does not — and why a render with an evidence violation is stored but never rendered
+    to PDF.
+  </div>
+  <section>
+    <h2>Archetypes</h2>
+    <div class="body flush" id="archetypes"><p class="body muted">loading…</p></div>
+  </section>
+  <section>
+    <h2>Generated resumes <span class="right"><button class="ghost small" id="renders-refresh">Refresh</button></span></h2>
+    <div class="body flush" id="renders"><p class="body muted">loading…</p></div>
+  </section>
+</div>
+
+<!-- ══ Companies ═════════════════════════════════════════════════════════ -->
+<div class="page" data-page="companies">
+  <section>
+    <h2>Company intelligence
+      <span class="right">
+        <button class="ghost small" id="research-btn">Research 10 more</button>
+        <button class="ghost small" id="companies-refresh">Refresh</button>
+      </span>
+    </h2>
+    <div class="body flush" id="companies"><p class="body muted">loading…</p></div>
+  </section>
+</div>
+
+<!-- ══ Outreach ══════════════════════════════════════════════════════════ -->
+<div class="page" data-page="outreach">
+  <div class="notice">
+    <strong>Nothing here sends on its own.</strong> A draft needs an approval and then an
+    explicit send, each a separate act. Contacts are only recorded from a page the company
+    publishes, or from you — this agent does not guess email addresses.
+  </div>
+  <section>
+    <h2>Gmail <span class="right"><span id="gmail-actions"></span></span></h2>
+    <div class="body" id="gmail-status"><span class="muted">checking…</span></div>
+  </section>
+  <section>
+    <h2>Rate limits</h2>
+    <div class="stats" id="outreach-limits"><span class="muted">loading…</span></div>
+  </section>
+  <section>
+    <h2>Worth contacting <span class="right"><button class="ghost small" id="outreach-refresh">Refresh</button></span></h2>
+    <div class="body flush" id="outreach-ops"><p class="body muted">loading…</p></div>
+  </section>
+  <section>
+    <h2>Messages</h2>
+    <div class="body flush" id="outreach-list"><p class="body muted">loading…</p></div>
+  </section>
+</div>
+
+<!-- ══ Analytics ═════════════════════════════════════════════════════════ -->
+<div class="page" data-page="analytics">
+  <div class="notice" id="analytics-notice"></div>
+  <section>
+    <h2>Funnel</h2>
+    <div class="bars" id="funnel"><span class="muted">loading…</span></div>
+  </section>
+  <div class="grid wide">
+    <section>
+      <h2>Rates</h2>
+      <div class="body" id="rates"><span class="muted">loading…</span></div>
+    </section>
+    <section>
+      <h2>LLM cost</h2>
+      <div class="body" id="costs"><span class="muted">loading…</span></div>
+    </section>
+  </div>
+  <section>
+    <h2>Breakdown
+      <span class="right">
+        <select id="dimension" style="width:auto;display:inline-block"></select>
+      </span>
+    </h2>
+    <div class="body flush" id="breakdown"><p class="body muted">loading…</p></div>
+  </section>
+  <section>
+    <h2>Resume performance</h2>
+    <div class="body flush" id="resume-perf"><p class="body muted">loading…</p></div>
+  </section>
+  <section>
+    <h2>What the outcomes show
+      <span class="right"><button class="ghost small" id="propose-btn">Propose a weight change</button></span>
+    </h2>
+    <div class="body" id="learning"><span class="muted">loading…</span></div>
+  </section>
+</div>
+
+<!-- ══ People ════════════════════════════════════════════════════════════ -->
+<div class="page" data-page="people">
+  <div class="notice" id="people-notice"></div>
+  <section>
+    <h2>Filters <span class="right"><button class="ghost small" id="people-refresh">Refresh</button></span></h2>
+    <div class="body">
+      <div class="row">
+        <label>Function
+          <select id="people-function"><option value="">any</option></select>
+        </label>
+        <label>Minimum relevance
+          <select id="people-min">
+            <option value="0">any</option><option value="45" selected>45 — worth contacting</option>
+            <option value="60">60</option><option value="80">80 — strong</option>
+          </select>
+        </label>
+        <label>Seniority at least
+          <select id="people-seniority">
+            <option value="">any</option><option value="2">manager or above</option>
+            <option value="3">director or above</option><option value="4">VP or above</option>
+          </select>
+        </label>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <label class="inline"><input type="checkbox" id="people-hiring"> Can hire</label>
+        <label class="inline"><input type="checkbox" id="people-email"> Has an email</label>
+        <label class="inline"><input type="checkbox" id="people-li"> Has LinkedIn</label>
+        <label class="inline"><input type="checkbox" id="people-contactable"> Verified address only</label>
+      </div>
+      <p class="tiny muted" style="margin-top:10px">
+        Nothing here is guessed. An address appears only where a company published it, and
+        an unverified one is shown with its source but never written to on its own —
+        <code>firstname.lastname@company.com</code> is a plausible guess, and a plausible
+        guess sitting beside real data is indistinguishable from it.
+      </p>
+    </div>
+  </section>
+  <section>
+    <h2>People</h2>
+    <div class="body flush" id="people-table"></div>
+  </section>
+</div>
+
+<!-- ══ Keys ══════════════════════════════════════════════════════════════ -->
+<div class="page" data-page="keys">
+  <div class="notice" id="keys-notice"></div>
+  <section>
+    <h2>API keys and quota
+      <span class="right"><button id="keys-check">Check balances</button></span>
+    </h2>
+    <div class="body">
+      <p class="tiny">
+        Keys are never shown — only the last four characters, enough to tell two apart when
+        you swap one. A quota marked <strong>provider</strong> came from the service itself.
+        One marked <strong>local</strong> is this machine's own call count: a floor, not a
+        balance, because it cannot see calls made anywhere else with the same key.
+      </p>
+    </div>
+    <div class="body flush" id="keys-table"></div>
+  </section>
+  <section>
+    <h2>Not configured</h2>
+    <div class="body flush" id="keys-missing"></div>
+  </section>
+</div>
+
+<!-- ══ Looking for ═══════════════════════════════════════════════════════ -->
+<div class="page" data-page="looking">
+  <div class="notice" id="pref-notice"></div>
+  <section>
+    <h2>What are you looking for?</h2>
+    <div class="body">
+      <p class="tiny">
+        Everything below feeds the ranking. Until it is answered a senior architect role on
+        another continent can outrank a local internship, because nothing tells the scorer
+        otherwise.
+      </p>
+
+      <label class="tiny">Experience level</label>
+      <select id="pref-band"></select>
+      <p class="tiny muted" id="pref-band-note"></p>
+
+      <div class="row">
+        <div>
+          <label class="tiny">Work mode</label>
+          <div id="pref-modes" class="tiny"></div>
+        </div>
+        <div>
+          <label class="tiny">Employment type</label>
+          <div id="pref-types" class="tiny"></div>
+        </div>
+      </div>
+
+      <label class="tiny">Roles you are targeting <span class="muted">(comma separated)</span></label>
+      <input id="pref-roles" type="text" placeholder="Data Analyst, ML Engineer, AI Engineer">
+      <p class="tiny muted">
+        A sample, not a complete list — a job in the same or a neighbouring family still
+        counts.
+      </p>
+
+      <label class="tiny">Locations <span class="muted">(comma separated; leave empty for anywhere)</span></label>
+      <input id="pref-locations" type="text" placeholder="Bangalore, Chennai, Remote">
+
+      <div class="row">
+        <label class="tiny">Ignore postings older than
+          <input id="pref-age" type="number" min="1" max="365" value="30" style="width:6rem"> days
+        </label>
+        <label class="tiny">Never show these companies
+          <input id="pref-blocked" type="text" placeholder="comma separated">
+        </label>
+      </div>
+
+      <div class="row">
+        <span class="right"><button id="pref-save">Save</button></span>
+      </div>
+    </div>
+  </section>
+  <section>
+    <h2>What this does</h2>
+    <div class="body" id="pref-effects"></div>
+  </section>
+</div>
+
+<!-- ══ Goal ══════════════════════════════════════════════════════════════ -->
+<div class="page" data-page="goal">
+  <section>
+    <h2>Give it a goal</h2>
+    <div class="body">
+      <p class="tiny">
+        Every other screen asks you to pick an operation. This one asks what you want, and
+        the supervisor decides the steps — each one chosen from what the last one found.
+        It can search, score, research, queue and fill in forms. It cannot submit an
+        application: there is no step for that, so anything it prepares waits for you.
+      </p>
+      <textarea id="goal-text" rows="2"
+        placeholder="Find data science internships in Bangalore and get three applications ready"></textarea>
+      <div class="row">
+        <label class="tiny">Max steps
+          <input id="goal-steps" type="number" min="1" max="12" value="6" style="width:5rem">
+        </label>
+        <label class="tiny">
+          <input id="goal-dry" type="checkbox" checked> Dry run — plan only, no API quota, no browser
+        </label>
+        <span class="right"><button id="goal-run">Run</button></span>
+      </div>
+      <p class="tiny muted" id="goal-status"></p>
+    </div>
+  </section>
+  <section>
+    <h2>The path it chose</h2>
+    <div class="body flush" id="goal-plan"><p class="body muted">Nothing run yet.</p></div>
+  </section>
+  <section>
+    <h2>What each step returned</h2>
+    <div class="body flush" id="goal-history"></div>
+  </section>
+  <section>
+    <h2>Outcome</h2>
+    <div class="body" id="goal-outcome"></div>
+  </section>
+</div>
+
+<!-- ══ Watch ═════════════════════════════════════════════════════════════ -->
+<div class="page" data-page="watch">
+  <div class="notice" id="watch-notice"></div>
+  <section>
+    <h2>Company boards being watched
+      <span class="right">
+        <button class="ghost small" id="watch-dry">Check without saving</button>
+        <button id="watch-sweep">Check now</button>
+      </span>
+    </h2>
+    <div class="body">
+      <p class="tiny">
+        Each board keeps its own schedule. One that posts something is checked three times
+        sooner next time; one that stays quiet is checked half again as far out, between 6
+        hours and a week. New openings are scored, and nothing is applied to.
+      </p>
+      <div id="watch-stats" class="row"></div>
+    </div>
+    <div class="body flush" id="watch-boards"></div>
+  </section>
+  <section>
+    <h2>Found recently</h2>
+    <div class="body flush" id="watch-new"><p class="body muted">loading…</p></div>
+  </section>
+</div>
+
+<!-- ══ Graph ═════════════════════════════════════════════════════════════ -->
+<div class="page" data-page="graph">
+  <div class="notice" id="graph-notice"></div>
+  <section>
+    <h2>Your career graph
+      <span class="right">
+        <button class="ghost small" id="graph-home">Back to you</button>
+        <select id="graph-depth" style="width:auto;display:inline-block">
+          <option value="1">1 hop</option>
+          <option value="2">2 hops</option>
+        </select>
+      </span>
+    </h2>
+    <div class="body">
+      <canvas id="graph-canvas" style="width:100%;height:460px;display:block;cursor:pointer">
+      </canvas>
+      <p class="tiny muted" id="graph-legend"></p>
+    </div>
+  </section>
+  <div class="grid wide">
+    <section>
+      <h2>Never contacted</h2>
+      <div class="body flush" id="graph-untouched"><p class="body muted">loading…</p></div>
+    </section>
+    <section>
+      <h2>Would open the most doors</h2>
+      <div class="body flush" id="graph-bridging"><p class="body muted">loading…</p></div>
+    </section>
+  </div>
+  <section>
+    <h2>Worth writing to, and has not heard from you
+      <span class="right tiny muted">relevance ≥ 45 at companies you match</span>
+    </h2>
+    <div class="body flush" id="graph-uncontacted"><p class="body muted">loading…</p></div>
+  </section>
+  <div class="grid wide">
+    <section>
+      <h2>What actually drew a reply</h2>
+      <div class="body flush" id="graph-worked"><p class="body muted">loading…</p></div>
+    </section>
+    <section>
+      <h2>Which resume version</h2>
+      <div class="body flush" id="graph-resumes"><p class="body muted">loading…</p></div>
+    </section>
+  </div>
+  <section>
+    <h2>How far each of your skills reaches</h2>
+    <div class="body flush" id="graph-reach"></div>
+  </section>
+</div>
+
+<!-- ══ Why ═══════════════════════════════════════════════════════════════ -->
+<div class="page" data-page="why">
+  <div class="notice" id="why-notice"></div>
+  <div class="grid wide">
+    <section>
+      <h2>Agents</h2>
+      <div class="body flush" id="why-agents"><p class="body muted">loading…</p></div>
+    </section>
+    <section>
+      <h2>Durability</h2>
+      <div class="body" id="why-durability"><span class="muted">loading…</span></div>
+    </section>
+  </div>
+  <section>
+    <h2>Decisions
+      <span class="right">
+        <select id="why-agent-filter" style="width:auto;display:inline-block"></select>
+      </span>
+    </h2>
+    <div class="body flush" id="why-decisions"><p class="body muted">loading…</p></div>
+  </section>
+</div>
+
+<!-- ══ Settings ══════════════════════════════════════════════════════════ -->
+<div class="page" data-page="settings">
+  <div class="grid wide">
+    <section>
+      <h2>Autonomy</h2>
+      <div class="body" id="autonomy"><span class="muted">loading…</span></div>
+    </section>
+    <section>
+      <h2>LLM providers</h2>
+      <div class="body" id="llm-settings"><span class="muted">loading…</span></div>
+    </section>
+  </div>
+  <section>
+    <h2>Ranking weights</h2>
+    <div class="body" id="weights"><span class="muted">loading…</span></div>
+  </section>
+  <section>
+    <h2>ATS platforms read for discovery</h2>
+    <div class="body flush" id="providers"><p class="body muted">loading…</p></div>
+  </section>
+</div>
+
+</main>
+
+<div class="modal-bg" id="modal-bg"><div class="modal" id="modal"></div></div>
+
+<script>
+'use strict';
+
+const API = '/api/v1';
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+/* The session token, when this deployment issues one.
+
+   `localStorage` rather than a cookie: the token is only ever read by this script to set
+   an Authorization header, and a cookie would be attached automatically to every request
+   including ones this page did not make, which is the CSRF exposure a bearer header does
+   not have. In single-user mode there is no token and this is all inert. */
+const TOKEN_KEY = 'careeragent_token';
+const getToken = () => { try { return localStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; } };
+const setToken = (value) => {
+  try { value ? localStorage.setItem(TOKEN_KEY, value) : localStorage.removeItem(TOKEN_KEY); }
+  catch { /* private window, or storage disabled; the session lasts this page load */ }
+};
+
+async function api(path, options) {
+  const settings = { ...(options || {}) };
+  const token = getToken();
+  if (token) settings.headers = { ...(settings.headers || {}), Authorization: `Bearer ${token}` };
+
+  const response = await fetch(API + path, settings);
+  const text = await response.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { data = { detail: text }; }
+
+  /* A 401 means the token expired, was revoked, or never existed. Show the login screen
+     rather than letting every panel render its own "failed to load" — twelve identical
+     error messages do not tell you that you need to sign in. */
+  if (response.status === 401) {
+    setToken('');
+    showLogin(path === '/auth/login' ? (data?.detail || 'Sign in to continue.') : '');
+    throw new Error(data?.detail || 'sign in to continue');
+  }
+  if (!response.ok) throw new Error(data?.detail || `${response.status} ${response.statusText}`);
+  return data;
+}
+
+/* ─── The login gate ──────────────────────────────────────────────────────
+
+   Rendered over everything rather than as a route, because a half-visible dashboard behind
+   a login box invites a reader to believe the numbers they can see through it. */
+function showLogin(message) {
+  let gate = document.getElementById('login-gate');
+  if (!gate) {
+    gate = document.createElement('div');
+    gate.id = 'login-gate';
+    gate.style.cssText =
+      'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;' +
+      'justify-content:center;background:var(--bg,#12131a);padding:24px';
+    gate.innerHTML = `
+      <form id="login-form" style="max-width:360px;width:100%">
+        <h2 style="margin:0 0 4px">Sign in</h2>
+        <p class="tiny muted" id="login-note" style="margin:0 0 16px"></p>
+        <label class="tiny muted" for="login-email">Email</label>
+        <input id="login-email" type="email" autocomplete="username" required
+               style="width:100%;margin-bottom:12px">
+        <label class="tiny muted" for="login-password">Password</label>
+        <input id="login-password" type="password" autocomplete="current-password" required
+               style="width:100%;margin-bottom:16px">
+        <button type="submit" style="width:100%">Sign in</button>
+        <p class="tiny" id="login-error" style="color:#e08f8f;min-height:1.2em;margin:12px 0 0"></p>
+      </form>`;
+    document.body.appendChild(gate);
+    gate.querySelector('#login-form').addEventListener('submit', onLoginSubmit);
+  }
+  gate.style.display = 'flex';
+  gate.querySelector('#login-note').textContent =
+    message || 'This deployment requires an account.';
+  gate.querySelector('#login-email').focus();
+}
+
+function hideLogin() {
+  const gate = document.getElementById('login-gate');
+  if (gate) gate.style.display = 'none';
+}
+
+async function onLoginSubmit(event) {
+  event.preventDefault();
+  const error = document.getElementById('login-error');
+  error.textContent = '';
+  const email = document.getElementById('login-email').value.trim();
+  const password = document.getElementById('login-password').value;
+
+  /* Deliberately not through `api()`: a failed login is a 401, and `api()` treats a 401 as
+     "your session ended" and re-opens this screen, which would wipe the error message the
+     user needs to read. */
+  try {
+    const response = await fetch(API + '/auth/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      error.textContent = data.detail || 'email or password is incorrect';
+      return;
+    }
+    setToken(data.access_token || '');
+    hideLogin();
+    document.getElementById('login-password').value = '';
+    location.reload();
+  } catch {
+    error.textContent = 'could not reach the server';
+  }
+}
+const post = (path, body) => api(path, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: body === undefined ? undefined : JSON.stringify(body),
+});
+const put = (path, body) => api(path, {
+  method: 'PUT',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify(body),
+});
+
+const pct = (v) => v === null || v === undefined ? '–' : `${(v * 100).toFixed(0)}%`;
+const scoreClass = (v) => v >= 0.75 ? 's-hi' : v >= 0.6 ? 's-mid' : 's-lo';
+const short = (id) => String(id || '').slice(0, 8);
+
+/* A rate is only ever rendered as a percentage when the backend says the sample
+   supports one. Otherwise the raw fraction, so it reads as what it is. */
+function rateText(rate) {
+  if (!rate) return '–';
+  if (rate.rate !== null && rate.rate !== undefined) return `${(rate.rate * 100).toFixed(0)}%`;
+  if (rate.n) return `<span class="tiny">${rate.count}/${rate.n} — too few</span>`;
+  return '<span class="tiny">none yet</span>';
+}
+
+// ─── Navigation ─────────────────────────────────────────────────────────────
+
+const PAGES = [
+  ['looking', 'Looking for', loadPreferences],
+  ['people', 'People', loadPeople],
+  ['keys', 'Keys', loadKeys],
+  ['goal', 'Goal', loadGoal],
+  ['campaign', 'Campaign', loadCampaign],
+  ['overview', 'Overview', loadOverview],
+  ['jobs', 'Jobs', loadJobs],
+  ['queue', 'Queue', loadQueue],
+  ['tracker', 'Tracker', loadTracker],
+  ['resumes', 'Resumes', loadResumes],
+  ['companies', 'Companies', loadCompanies],
+  ['outreach', 'Outreach', loadOutreach],
+  ['watch', 'Watch', loadWatch],
+  ['graph', 'Graph', loadGraph],
+  ['analytics', 'Analytics', loadAnalytics],
+  ['why', 'Why', loadWhy],
+  ['settings', 'Settings', loadSettings],
+];
+const loaders = {};
+let current = 'campaign';
+
+function buildNav() {
+  $('nav').innerHTML = PAGES.map(([id, label]) =>
+    `<button data-nav="${id}" ${id === current ? 'aria-current="page"' : ''}>${label}` +
+    (id === 'queue' ? '<span class="badge quiet" id="queue-badge">0</span>' : '') +
+    `</button>`).join('');
+  for (const [id, , loader] of PAGES) loaders[id] = loader;
+  $('nav').addEventListener('click', (event) => {
+    const target = event.target.closest('[data-nav]');
+    if (target) show(target.dataset.nav);
+  });
+}
+
+function show(id) {
+  current = id;
+  for (const page of document.querySelectorAll('.page'))
+    page.classList.toggle('active', page.dataset.page === id);
+  for (const button of document.querySelectorAll('[data-nav]'))
+    button.toggleAttribute('aria-current', button.dataset.nav === id);
+  for (const button of document.querySelectorAll('[data-nav]'))
+    if (button.dataset.nav === id) button.setAttribute('aria-current', 'page');
+  location.hash = id;
+  loaders[id]?.();
+}
+
+function openModal(html) {
+  $('modal').innerHTML = html;
+  $('modal-bg').classList.add('open');
+}
+function closeModal() { $('modal-bg').classList.remove('open'); }
+$('modal-bg').addEventListener('click', (event) => {
+  if (event.target === $('modal-bg')) closeModal();
+});
+document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeModal(); });
+
+// ─── Status ─────────────────────────────────────────────────────────────────
+
+let status = {};
+
+async function loadStatus() {
+  try {
+    status = await api('/status');
+  } catch (error) {
+    $('p-candidate').textContent = 'API unreachable';
+    $('p-candidate').className = 'pill bad';
+    return;
+  }
+  const set = (id, text, cls) => {
+    const element = $(id);
+    element.textContent = text;
+    element.className = 'pill' + (cls ? ' ' + cls : '');
+  };
+  set('p-candidate', status.candidate
+    ? `${status.candidate} · ${status.facts} facts (${status.verified_facts} verified)`
+    : 'no resume', status.candidate ? 'ok' : 'warn');
+  set('p-jobs', `${status.jobs} jobs`);
+  set('p-companies', `${status.companies_researched} researched`);
+  set('p-llm', status.llm_available ? 'LLM ready' : 'LLM off',
+    status.llm_available ? 'ok' : 'warn');
+  set('p-semantic', status.semantic_matching ? 'semantic on' : 'semantic off',
+    status.semantic_matching ? 'ok' : 'warn');
+  set('p-autonomy', `autonomy ${status.autonomy_level} · ${status.autonomy_description}`);
+
+  const badge = $('queue-badge');
+  if (badge) {
+    badge.textContent = status.awaiting_approval ?? 0;
+    badge.className = 'badge' + (status.awaiting_approval ? '' : ' quiet');
+  }
+  $('llm-hint').textContent = status.llm_available ? '' : '(no key configured)';
+  $('use-llm').disabled = !status.llm_available;
+}
+
+// ─── Overview ───────────────────────────────────────────────────────────────
+
+async function loadOverview() {
+  const [summary, gaps, facts] = await Promise.all([
+    api('/applications/summary').catch(() => null),
+    api('/candidate/gaps?limit=12').catch(() => []),
+    api('/candidate/facts').catch(() => []),
+  ]);
+
+  $('overview-notice').innerHTML = status.candidate
+    ? `<strong>Search widely, apply selectively.</strong> The agent fills what it can prove
+       from your Fact Bank and stops. Demographics, sponsorship declarations and anything
+       it cannot evidence are left for you — at every autonomy level.`
+    : `<strong>Start by uploading your resume.</strong> Everything else — scoring, tailoring,
+       form filling — works off the Fact Bank it produces, and nothing is claimed about you
+       that is not traceable to a line you wrote.`;
+  $('overview-notice').className = 'notice' + (status.candidate ? '' : ' warn');
+
+  const cards = [
+    ['Jobs found', status.jobs],
+    ['Applications', summary?.total ?? 0],
+    ['Awaiting approval', summary?.awaiting_approval ?? 0, summary?.awaiting_approval],
+    ['Needs you', summary?.needs_human ?? 0, summary?.needs_human],
+    ['Submitted', summary?.submitted ?? 0],
+    ['Today', summary?.submitted_today ?? 0],
+    ['This week', summary?.submitted_this_week ?? 0],
+    ['Responses', summary?.responses ?? 0],
+    ['Interviews', summary?.interviews ?? 0],
+    ['Offers', summary?.offers ?? 0],
+    ['Unconfirmed', summary?.submission_unverified ?? 0, summary?.submission_unverified],
+  ];
+  $('overview-stats').innerHTML = cards.map(([label, value, attn]) =>
+    `<div class="stat${attn ? ' attn' : ''}"><b>${value}</b><span>${label}</span></div>`).join('');
+
+  $('gaps').innerHTML = gaps.length
+    ? `<div class="chips">${gaps.map((g) =>
+        `<span class="chip warn">${esc(g.skill)} · ${g.seen_in_job_count}</span>`).join('')}</div>
+       <p class="tiny" style="margin:10px 0 0">Skills jobs keep asking for that your Fact Bank
+       has no evidence for. Recorded rather than invented — this is what to learn next,
+       ranked by how often it costs you an application.</p>`
+    : '<span class="muted">Nothing yet. Run a search.</span>';
+
+  const byKind = {};
+  for (const fact of facts) (byKind[fact.kind] ??= []).push(fact);
+  $('facts').innerHTML = facts.length
+    ? Object.entries(byKind).map(([kind, items]) =>
+        `<details><summary>${esc(kind)} · ${items.length}</summary><div class="body">
+          <ul class="list">${items.slice(0, 40).map((f) =>
+            `<li>${esc(f.label)}${f.verified ? ' <span class="chip good">verified</span>' : ''}
+             <span class="tiny">${esc(f.evidence_locator)}</span></li>`).join('')}</ul>
+         </div></details>`).join('')
+    : '<span class="muted">No resume ingested yet.</span>';
+}
+
+// ─── Resume upload ──────────────────────────────────────────────────────────
+
+function wireUpload() {
+  const drop = $('drop');
+  const input = $('file');
+  drop.addEventListener('click', () => input.click());
+  drop.addEventListener('dragover', (event) => {
+    event.preventDefault(); drop.classList.add('over');
+  });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', (event) => {
+    event.preventDefault();
+    drop.classList.remove('over');
+    if (event.dataTransfer.files[0]) upload(event.dataTransfer.files[0]);
+  });
+  input.addEventListener('change', () => { if (input.files[0]) upload(input.files[0]); });
+}
+
+async function upload(file) {
+  const out = $('upload-result');
+  out.innerHTML = '<p class="muted"><span class="spinner"></span> Parsing…</p>';
+  const form = new FormData();
+  form.append('file', file);
+  try {
+    const data = await api('/resume/upload', { method: 'POST', body: form });
+    out.innerHTML =
+      `<p class="ok">${esc(data.name)} — ${data.facts_added} new fact(s),
+        ${data.facts_existing} already known.</p>
+       <div class="chips">${Object.entries(data.by_kind).map(([kind, count]) =>
+         `<span class="chip">${esc(kind)} ${count}</span>`).join('')}</div>
+       ${data.warnings?.length
+         ? `<ul class="list warn">${data.warnings.map((w) =>
+             `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
+       <p class="tiny" style="margin-top:8px">Facts land unverified. They are used for
+       matching immediately, but a generated resume only makes claims you have confirmed.</p>`;
+    await loadStatus();
+    await loadOverview();
+  } catch (error) {
+    out.innerHTML = `<p class="err">${esc(error.message)}</p>`;
+  }
+}
+
+// ─── Search ─────────────────────────────────────────────────────────────────
+
+async function loadSegments() {
+  try {
+    const segments = await api('/segments');
+    $('segment').innerHTML =
+      Object.entries(segments).map(([name, info]) =>
+        `<option value="${esc(name)}"${name === 'india' ? ' selected' : ''}>${esc(name)} —
+          ${info.companies} companies</option>`).join('') +
+      '<option value="none">none (use the domains below)</option>';
+  } catch { /* status already reports an unreachable API */ }
+}
+
+function wireSearch() {
+  $('parse-btn').addEventListener('click', async () => {
+    const text = $('command').value.trim();
+    if (!text) return;
+    const out = $('parse-result');
+    out.innerHTML = '<p class="muted"><span class="spinner"></span> Reading…</p>';
+    try {
+      const data = await post('/commands', { text });
+      const config = data.understood;
+      out.innerHTML =
+        `<p class="ok">${esc(data.would_do)}</p>
+         <p class="tiny">Parsed, not run — the fields below have been filled in for you
+         to check before anything happens.</p>`;
+      if (config.roles?.length) $('roles').value = config.roles.join(', ');
+      if (config.locations?.length) $('locations').value = config.locations.join(', ');
+      if (config.max_job_age_days) {
+        const age = $('age');
+        const match = [...age.options].find((o) => +o.value >= config.max_job_age_days);
+        if (match) age.value = match.value;
+      }
+      if (config.experience_band) $('experience').value = config.experience_band;
+    } catch (error) {
+      out.innerHTML = `<p class="err">${esc(error.message)}</p>`;
+    }
+  });
+
+  $('run-btn').addEventListener('click', async () => {
+    const button = $('run-btn');
+    const out = $('run-result');
+    const split = (id) => $(id).value.split(',').map((s) => s.trim()).filter(Boolean);
+    button.disabled = true;
+    out.innerHTML = '<p class="muted"><span class="spinner"></span> Starting…</p>';
+    try {
+      const data = await post('/runs/discovery', {
+        segment: $('segment').value,
+        targets: split('targets'),
+        roles: split('roles'),
+        locations: split('locations'),
+        experience: $('experience').value || null,
+        max_age_days: +$('age').value,
+        use_semantic: $('use-semantic').checked,
+        use_llm: $('use-llm').checked,
+        research_companies: $('use-companies').checked,
+      });
+      out.innerHTML = `<p class="ok">${esc(data.message)}</p>
+        <p class="tiny">Watch it in the activity feed. Nothing is applied to.</p>`;
+      pollRun(data.run_id, button, out);
+    } catch (error) {
+      out.innerHTML = `<p class="err">${esc(error.message)}</p>`;
+      button.disabled = false;
+    }
+  });
+}
+
+function pollRun(runId, button, out) {
+  const timer = setInterval(async () => {
+    try {
+      const data = await api(`/runs/${runId}`);
+      if (data.status === 'running') return;
+      clearInterval(timer);
+      button.disabled = false;
+      const stats = data.stats || {};
+      if (data.status === 'failed') {
+        out.innerHTML = `<p class="err">${esc(data.error || 'run failed')}</p>`;
+      } else {
+        out.innerHTML =
+          `<p class="ok">${stats.unique} unique job(s) — ${stats.worth_applying} worth applying to,
+            ${stats.outreach_opportunities || 0} outreach opportunit(ies).</p>
+           <div class="chips">
+             <span class="chip">discovered ${stats.discovered}</span>
+             <span class="chip">duplicates ${stats.duplicates_removed}</span>
+             <span class="chip">rejected ${stats.rejected}</span>
+             <span class="chip">past gate ${stats.past_gate}</span>
+             <span class="chip">companies ${stats.companies_researched || 0}</span>
+             ${stats.llm_cost_usd
+               ? `<span class="chip cyan">$${stats.llm_cost_usd.toFixed(4)}</span>` : ''}
+           </div>`;
+      }
+      loadStatus();
+    } catch { clearInterval(timer); button.disabled = false; }
+  }, 3000);
+}
+
+// ─── Campaign: companies first ──────────────────────────────────────────────
+
+let selected = new Set();
+let lastCampaign = null;
+let batchTimer = null;
+
+const REGION_PRESETS = ['Bangalore', 'Chennai', 'Hyderabad', 'Pune', 'Mumbai',
+  'Delhi', 'Coimbatore', 'India', 'Remote'];
+
+async function loadCampaign() {
+  const [sources, detected, families, modes] = await Promise.all([
+    api('/campaigns/sources').catch(() => null),
+    api('/careers/detect').catch(() => null),
+    api('/careers/families').catch(() => ({ groups: {} })),
+    api('/campaigns/modes').catch(() => ({ modes: [] })),
+  ]);
+
+  /* Source coverage is the single biggest determinant of how many companies a
+     region search returns, so it is stated at the top rather than buried in
+     settings. An empty Bangalore result with no explanation reads as "broken". */
+  if (sources) {
+    const missing = sources.missing_keys || [];
+    $('campaign-sources').className = 'notice' + (missing.length ? ' warn' : '');
+    $('campaign-sources').innerHTML =
+      `<strong>${sources.configured} of ${sources.total} data sources live.</strong>
+       ${esc(sources.note || '')}
+       ${missing.length ? `<div class="chips" style="margin-top:8px">${missing.map((m) =>
+         `<a class="chip warn" href="${esc(m.signup)}" target="_blank" rel="noopener">
+           get ${esc(m.label)} key →</a>`).join('')}</div>` : ''}`;
+  }
+
+  if (detected) {
+    $('detected').innerHTML = detected.confident
+      ? `<p><b>${esc((detected.matches[0] || {}).label || '')}</b>
+           <span class="chip">${esc(detected.group)}</span></p>
+         <ul class="list">${detected.matches.slice(0, 4).map((m) =>
+           `<li>${esc(m.label)} <span class="tiny">${esc((m.reasons || [])[0] || '')}</span></li>`)
+           .join('')}</ul>
+         <p class="tiny">Detected from your Fact Bank, not from the heading on your
+         resume — a "Software Engineer" whose projects are all AutoCAD is a civil
+         engineer with a generic job title.</p>`
+      : `<p class="muted">${esc(detected.note || 'Could not detect your field.')}</p>`;
+  } else {
+    $('detected').innerHTML =
+      '<p class="muted">Upload your resume on the Overview tab first.</p>';
+  }
+
+  const suggested = new Set(detected ? detected.suggested || [] : []);
+  $('family-picker').innerHTML = Object.entries(families.groups || {}).map(([group, members]) =>
+    `<details ${members.some((m) => suggested.has(m.id)) ? 'open' : ''}>
+      <summary>${esc(group)} · ${members.length}</summary>
+      <div class="body" style="padding:8px 0 0">
+        ${members.map((m) => `<label class="check" style="margin-top:4px">
+          <input type="checkbox" data-family="${esc(m.id)}"
+                 ${suggested.has(m.id) ? 'checked' : ''}>
+          ${esc(m.label)}</label>`).join('')}
+      </div></details>`).join('');
+
+  $('region-presets').innerHTML = REGION_PRESETS.map((r) =>
+    `<span class="chip" data-region="${esc(r)}" style="cursor:pointer">${esc(r)}</span>`).join('');
+
+  if (!$('apply-mode').options.length) {
+    $('apply-mode').innerHTML = (modes.modes || []).map((m) =>
+      `<option value="${esc(m.id)}">${esc(m.label)}</option>`).join('');
+    const describe = () => {
+      const chosen = (modes.modes || []).find((m) => m.id === $('apply-mode').value);
+      $('mode-note').innerHTML = chosen
+        ? `${esc(chosen.description)}<br><b>Never automated at any mode:</b>
+           ${(modes.hard_stops || []).map(esc).join(' · ')}`
+        : '';
+    };
+    $('apply-mode').addEventListener('change', describe);
+    describe();
+  }
+
+  await refreshBatch();
+}
+
+$('region-presets').addEventListener('click', (event) => {
+  const chip = event.target.closest('[data-region]');
+  if (!chip) return;
+  const field = $('regions');
+  const current = field.value.split(',').map((s) => s.trim()).filter(Boolean);
+  const region = chip.dataset.region;
+  field.value = current.includes(region)
+    ? current.filter((r) => r !== region).join(', ')
+    : [...current, region].join(', ');
+});
+
+$('campaign-btn').addEventListener('click', async () => {
+  const button = $('campaign-btn');
+  const out = $('campaign-result');
+  const families = [...document.querySelectorAll('[data-family]:checked')]
+    .map((input) => input.dataset.family);
+  const regions = $('regions').value.split(',').map((s) => s.trim()).filter(Boolean);
+
+  if (!families.length) { out.innerHTML = '<p class="err">Pick at least one job family.</p>'; return; }
+  if (!regions.length) { out.innerHTML = '<p class="err">Pick at least one region.</p>'; return; }
+
+  button.disabled = true;
+  button.innerHTML = '<span class="spinner"></span> Five agents working…';
+  out.innerHTML = '<p class="muted">Sourcing, aggregating, resolving ATS boards…</p>';
+  try {
+    const data = await post('/campaigns/run', {
+      locations: regions,
+      family_ids: families,
+      include_related: $('include-related').checked,
+      max_age_days: +$('c-age').value,
+      enrich_limit: +$('c-enrich').value,
+    });
+    lastCampaign = data;
+    selected = new Set();
+    renderCompanies();
+    const st = data.stats || {};
+    out.innerHTML =
+      `<p class="ok">${st.companies} companies · ${st.applyable_companies} with an
+        applyable board · ${st.jobs_ranked} ranked jobs</p>
+       <div class="chips">
+         <span class="chip">${st.postings_seen} postings seen</span>
+         <span class="chip">${st.enriched} enriched</span>
+         ${Object.entries(st.source_calls || {}).map(([k, v]) =>
+           `<span class="chip">${esc(k)} ×${v}</span>`).join('')}
+       </div>
+       ${(data.source_errors || []).length
+         ? `<ul class="list warn">${data.source_errors.map((e) =>
+             `<li>${esc(e)}</li>`).join('')}</ul>` : ''}`;
+  } catch (error) {
+    out.innerHTML = `<p class="err">${esc(error.message)}</p>`;
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Find companies';
+  }
+});
+
+function renderCompanies() {
+  if (!lastCampaign) return;
+  const showAll = $('company-filter').value === 'all';
+  const companies = (lastCampaign.companies || [])
+    .filter((c) => showAll || c.applyable);
+
+  if (!companies.length) {
+    $('company-list').innerHTML =
+      `<p class="body muted">No ${showAll ? '' : 'applyable '}companies.
+       ${showAll ? '' : 'Switch to "All companies" to see leads whose ATS could not be resolved.'}</p>`;
+    return;
+  }
+
+  const jobsByCompany = {};
+  for (const job of lastCampaign.jobs || []) {
+    (jobsByCompany[job.company] ??= []).push(job);
+  }
+
+  $('company-list').innerHTML = `<table><thead><tr>
+      <th style="width:28px"></th><th>Company</th><th>Roles</th>
+      <th>ATS</th><th>Best match</th></tr></thead><tbody>
+    ${companies.map((c) => {
+      const jobs = jobsByCompany[c.name] || [];
+      const best = jobs[0];
+      return `<tr>
+        <td>${c.applyable && jobs.length
+          ? `<input type="checkbox" data-company="${esc(c.name)}"
+               ${selected.has(c.name) ? 'checked' : ''}>` : ''}</td>
+        <td><b>${esc(c.name)}</b>
+          <div class="tiny">${esc((c.locations || [])[0] || '')}
+            ${c.domain ? ` · ${esc(c.domain)}` : ''}</div>
+          <div class="chips" style="margin-top:3px">${(c.sources || []).map((s) =>
+            `<span class="chip">${esc(s)}</span>`).join('')}</div></td>
+        <td class="num">${c.ats_job_count || 0}
+          <div class="tiny">${c.open_roles} posting(s)</div></td>
+        <td>${c.applyable
+          ? `<span class="chip good">${esc(c.ats_provider)}</span>`
+          : '<span class="chip">lead only</span>'}</td>
+        <td class="tiny">${best
+          ? `<span class="score ${scoreClass(best.score)}">${best.score.toFixed(2)}</span>
+             ${esc(best.title)}`
+          : esc((c.sample_titles || [])[0] || '–')}</td>
+      </tr>`;
+    }).join('')}</tbody></table>`;
+  updateSelection();
+}
+
+$('company-filter').addEventListener('change', renderCompanies);
+
+$('company-list').addEventListener('change', (event) => {
+  const box = event.target.closest('[data-company]');
+  if (!box) return;
+  if (box.checked) selected.add(box.dataset.company);
+  else selected.delete(box.dataset.company);
+  updateSelection();
+});
+
+$('select-all').addEventListener('click', () => {
+  const boxes = [...document.querySelectorAll('[data-company]')].slice(0, 10);
+  for (const box of boxes) { box.checked = true; selected.add(box.dataset.company); }
+  updateSelection();
+});
+
+function selectedJobIds() {
+  if (!lastCampaign) return [];
+  const ids = [];
+  for (const job of lastCampaign.jobs || []) {
+    // One job per company: the best-scoring one. Applying to six roles at the same
+    // employer from one click is not what "apply to this company" means.
+    if (selected.has(job.company) && !ids.some((j) => j.company === job.company)) {
+      ids.push(job);
+    }
+  }
+  return ids.map((j) => j.job_id);
+}
+
+function updateSelection() {
+  const count = selectedJobIds().length;
+  $('selection-count').textContent = `${count} selected`;
+  $('apply-btn').disabled = count === 0;
+}
+
+$('apply-btn').addEventListener('click', async () => {
+  const jobIds = selectedJobIds();
+  if (!jobIds.length) return;
+  const mode = $('apply-mode').value;
+  if (mode === 'one_click' && !confirm(
+      `Submit ${jobIds.length} application(s) without a second confirmation? ` +
+      `This is irreversible.`)) return;
+
+  const button = $('apply-btn');
+  button.disabled = true;
+  button.innerHTML = '<span class="spinner"></span> Starting agents…';
+  try {
+    const data = await post('/campaigns/apply', {
+      job_ids: jobIds,
+      mode,
+      concurrency: +$('apply-concurrency').value,
+    });
+    $('apply-result').innerHTML = `<p class="ok">${esc(data.note || '')}</p>`;
+    startBatchPolling();
+  } catch (error) {
+    $('apply-result').innerHTML = `<p class="err">${esc(error.message)}</p>`;
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Apply to selected';
+  }
+});
+
+function startBatchPolling() {
+  clearInterval(batchTimer);
+  batchTimer = setInterval(async () => {
+    const done = await refreshBatch();
+    if (done) clearInterval(batchTimer);
+  }, 3000);
+  refreshBatch();
+}
+
+async function refreshBatch() {
+  const data = await api('/campaigns/batch/current').catch(() => null);
+  if (!data || data.running === false && !data.total) {
+    $('batch-view').innerHTML = '<p class="body muted">No batch running.</p>';
+    return true;
+  }
+
+  const items = data.items || [];
+  $('batch-view').innerHTML = `
+    <div class="stats" style="padding:12px 16px 6px">
+      <div class="stat"><b>${data.total || 0}</b><span>queued</span></div>
+      <div class="stat attn"><b>${data.awaiting_approval || 0}</b><span>awaiting you</span></div>
+      <div class="stat"><b>${data.submitted || 0}</b><span>submitted</span></div>
+      <div class="stat"><b>${data.needs_you || 0}</b><span>need you</span></div>
+      <div class="stat"><b>${data.failed || 0}</b><span>failed</span></div>
+      <div class="stat"><b>${Math.round(data.elapsed || 0)}s</b><span>elapsed</span></div>
+    </div>
+    <table><thead><tr><th>Company</th><th>Status</th><th>Filled</th>
+      <th>Left for you</th><th></th></tr></thead><tbody>
+    ${items.map((item) => `<tr>
+      <td><b>${esc(item.company)}</b><div class="tiny">${esc(item.title)}</div></td>
+      <td><span class="chip ${item.status === 'applied' ? 'good'
+        : item.awaiting_approval ? 'warn'
+        : ['failed', 'error', 'failed_terminal'].includes(item.status) ? 'bad' : ''}">
+        ${esc(item.status)}</span>
+        ${item.seconds ? `<div class="tiny">${item.seconds}s</div>` : ''}</td>
+      <td class="tiny">${(item.validation || {}).ats_score !== undefined
+        ? `resume ${pct(item.validation.ats_score)}` : ''}
+        ${item.ats ? `<div>${esc(item.ats)}</div>` : ''}</td>
+      <td class="tiny">${[...(item.never_filled || []), ...(item.needs_user || [])]
+        .slice(0, 3).map(esc).join('<br>') || '–'}
+        ${item.error ? `<div class="err">${esc(item.error)}</div>` : ''}</td>
+      <td>${item.awaiting_approval
+        ? `<button class="small go" data-approvebatch="${esc(item.application_id)}">Review</button>`
+        : ''}</td>
+    </tr>`).join('')}</tbody></table>`;
+  return Boolean(data.done);
+}
+
+$('batch-refresh').addEventListener('click', refreshBatch);
+$('batch-stop').addEventListener('click', async () => {
+  const data = await post('/campaigns/batch/stop').catch(() => null);
+  if (data) alert(data.note);
+  refreshBatch();
+});
+
+$('batch-view').addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-approvebatch]');
+  if (!button) return;
+  button.disabled = true;
+  try {
+    const preview = await api(`/campaigns/approvals/${button.dataset.approvebatch}`);
+    showBatchApproval(button.dataset.approvebatch, preview);
+  } catch (error) { alert(error.message); }
+  finally { button.disabled = false; }
+});
+
+function showBatchApproval(applicationId, p) {
+  openModal(`<header><h1>Approve this application?</h1>
+      <span class="pill">${esc(p.ats || '')}</span>
+      <button class="ghost small" style="margin-left:auto" onclick="closeModal()">Close</button>
+    </header><div class="body">
+    <dl class="kv"><dt>Form</dt><dd><a href="${esc(p.url)}" target="_blank"
+      rel="noopener">${esc(p.url)}</a></dd></dl>
+    ${(p.filled || []).length ? `<h3>Filled and read back (${p.filled.length})</h3>
+      <ul class="list">${p.filled.map((f) =>
+        `<li>${f.ok ? '' : '<span class="chip bad">unverified</span> '}${esc(f.label)}
+         <span class="tiny">${esc(f.detail)}</span></li>`).join('')}</ul>` : ''}
+    ${(p.never_filled || []).length ? `<h3>Left for you — never filled by the agent</h3>
+      <ul class="list cyan">${p.never_filled.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+    ${(p.answers || []).length ? `<h3>Generated answers</h3>
+      ${p.answers.map((a) => `<div class="card" style="cursor:default">
+        <b>${esc(a.question)}</b>
+        <span class="chip ${a.outcome === 'answered' ? 'good' : 'warn'}">${esc(a.outcome)}</span>
+        ${a.text ? `<p style="margin:6px 0 0">${esc(a.text)}</p>` : ''}</div>`).join('')}` : ''}
+    ${(p.screenshots || []).length ? `<img class="shot"
+      src="${API}/applications/${applicationId}/screenshot/${p.screenshots.length - 1}"
+      alt="the filled form">` : ''}
+    <div class="actions" style="margin-top:18px">
+      <button class="go" data-batchyes="${esc(applicationId)}">Approve and submit</button>
+      <button class="danger" data-batchno="${esc(applicationId)}">Decline</button>
+    </div></div>`);
+}
+
+$('modal').addEventListener('click', async (event) => {
+  const yes = event.target.closest('[data-batchyes]');
+  const no = event.target.closest('[data-batchno]');
+  if (!yes && !no) return;
+  const id = (yes || no).dataset.batchyes || (yes || no).dataset.batchno;
+  const button = yes || no;
+  button.disabled = true;
+  button.innerHTML = '<span class="spinner"></span>';
+  try {
+    const data = await post(`/campaigns/approvals/${id}`, {
+      approved: Boolean(yes), field_overrides: {},
+    });
+    closeModal();
+    if (Boolean(yes)) {
+      alert(data.status === 'applied'
+        ? 'Submitted — confirmed by the page.'
+        : data.status === 'submission_unverified'
+          ? 'Clicked submit but saw no confirmation. Check your email, then set the status yourself.'
+          : `Not submitted — ${data.status}. ${(data.holds || []).join('; ')}`);
+    }
+    refreshBatch();
+    loadStatus();
+  } catch (error) { alert(error.message); button.disabled = false; }
+});
+
+// ─── Jobs ───────────────────────────────────────────────────────────────────
+
+async function loadJobs() {
+  const priority = $('job-priority').value;
+  const jobs = await api(`/jobs?limit=60${priority ? '&priority=' + priority : ''}`)
+    .catch(() => []);
+  if (!jobs.length) {
+    $('jobs-table').innerHTML =
+      '<p class="body muted">No jobs yet. Run a search from the Overview tab.</p>';
+    return;
+  }
+  $('jobs-table').innerHTML = `<table><thead><tr>
+      <th>Score</th><th>Role</th><th>Company</th><th>Location</th>
+      <th>Mode</th><th>ATS</th><th>Why</th><th></th></tr></thead><tbody>
+    ${jobs.map((job) => `<tr>
+      <td class="score ${scoreClass(job.final_score || 0)}">
+        ${job.final_score ? job.final_score.toFixed(2) : '–'}
+        <div class="tiny">${esc(job.priority || '')}</div></td>
+      <td><b>${esc(job.title)}</b>
+        ${job.urls?.[0] ? `<div class="tiny"><a href="${esc(job.urls[0])}"
+          target="_blank" rel="noopener">open posting</a></div>` : ''}</td>
+      <td>${esc(job.company)}</td>
+      <td>${esc(job.location || '–')}</td>
+      <td class="tiny">${esc(job.work_mode)}<br>${esc(job.employment_type)}</td>
+      <td class="tiny">${esc(job.ats || '–')}</td>
+      <td class="tiny">${(job.reasons || []).slice(0, 2).map(esc).join('<br>')}
+        ${job.missing_skills?.length
+          ? `<div class="chips" style="margin-top:4px">${job.missing_skills.slice(0, 4).map((s) =>
+              `<span class="chip bad">${esc(s)}</span>`).join('')}</div>` : ''}</td>
+      <td><div class="actions">
+        <button class="small ghost" data-tailor="${esc(job.id)}">Tailor</button>
+        <button class="small" data-prepare="${esc(job.id)}">Prepare</button>
+        <button class="small danger" data-reject="${esc(job.id)}">Reject</button>
+      </div></td></tr>`).join('')}</tbody></table>`;
+}
+
+$('jobs-table').addEventListener('click', async (event) => {
+  const tailor = event.target.closest('[data-tailor]');
+  const prepare = event.target.closest('[data-prepare]');
+  const reject = event.target.closest('[data-reject]');
+  if (tailor) return tailorJob(tailor.dataset.tailor, tailor);
+  if (prepare) return prepareJob(prepare.dataset.prepare, prepare);
+  if (reject) {
+    const reason = prompt('Why not this one? (recorded as learning signal)');
+    if (reason === null) return;
+    reject.disabled = true;
+    try {
+      await post(`/jobs/${reject.dataset.reject}/reject`, { reason });
+      reject.closest('tr').style.opacity = '.4';
+    } catch (error) { alert(error.message); reject.disabled = false; }
+  }
+});
+
+async function tailorJob(jobId, button) {
+  const label = button.textContent;
+  button.disabled = true;
+  button.innerHTML = '<span class="spinner"></span>';
+  try {
+    const data = await post('/resumes/tailor', { job_id: jobId, use_llm: status.llm_available });
+    showValidation(data);
+  } catch (error) {
+    alert(error.message);
+  } finally { button.disabled = false; button.textContent = label; }
+}
+
+function showValidation(data) {
+  const v = data.validation || {};
+  openModal(`<header><h1>Tailored resume</h1>
+      <span class="pill ${v.ok ? 'ok' : 'bad'}">${v.ok ? 'validated' : 'held back'}</span>
+      <button class="ghost small" style="margin-left:auto" onclick="closeModal()">Close</button>
+    </header>
+    <div class="body">
+      <div class="stats" style="padding:0 0 14px">
+        <div class="stat"><b>${pct(v.ats_score)}</b><span>ATS readability</span></div>
+        <div class="stat"><b>${pct(v.evidence_integrity)}</b><span>Evidence integrity</span></div>
+        <div class="stat"><b>${pct(v.keyword_match)}</b><span>Keyword match</span></div>
+      </div>
+      ${(data.notes || []).some((n) => n.includes('rejected')) ? `<div class="notice warn">
+        <strong>A model rewrite was rejected and discarded.</strong>
+        <ul class="list warn">${data.notes.filter((n) => n.includes('rejected')).map((n) =>
+          `<li>${esc(n)}</li>`).join('')}</ul>
+        You have the deterministic version instead: your own bullet text, reordered for
+        this job. Less polished, and it does not claim anything you cannot back up.</div>`
+        : (data.notes || []).length
+          ? `<ul class="list">${data.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}
+      ${data.generated_by ? `<p class="tiny">Produced by the
+        <b>${esc(data.generated_by)}</b> path.</p>` : ''}
+      ${v.violations?.length ? `<h3>Blocking violations</h3>
+        <ul class="list bad">${v.violations.map((x) =>
+          `<li><b>${esc(x.kind)}</b> — ${esc(x.detail)}${x.location
+            ? ` <span class="tiny">${esc(x.location)}</span>` : ''}</li>`).join('')}</ul>
+        <p class="tiny">A document with any violation is not rendered to PDF and cannot be
+        attached. Fix the Fact Bank rather than the wording.</p>` : ''}
+      ${v.warnings?.length ? `<h3>Warnings</h3><ul class="list warn">${v.warnings.map((w) =>
+        `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
+      ${v.missing_keywords?.length ? `<h3>Keywords you cannot evidence</h3>
+        <div class="chips">${v.missing_keywords.map((k) =>
+          `<span class="chip bad">${esc(k)}</span>`).join('')}</div>
+        <p class="tiny">Reported, never inserted. This is the honest answer to
+        "why might this be screened out".</p>` : ''}
+      ${data.render_id ? `<p style="margin-top:16px" class="actions">
+        <a class="chip cyan" href="${API}/resumes/renders/${data.render_id}/preview"
+           target="_blank" rel="noopener">Preview</a>
+        ${v.ok ? `<a class="chip good" href="${API}/resumes/renders/${data.render_id}/download">
+          Download PDF</a>` : ''}</p>` : ''}
+    </div>`);
+}
+
+async function prepareJob(jobId, button) {
+  const label = button.textContent;
+  button.disabled = true;
+  button.innerHTML = '<span class="spinner"></span>';
+  try {
+    const created = await post('/applications', { job_id: jobId });
+    const prepared = await post(`/applications/${created.application_id}/prepare`, {
+      use_llm: status.llm_available, write_cover_letter: false, headless: true,
+    });
+    showPreview(prepared);
+    loadStatus();
+  } catch (error) {
+    alert(error.message);
+  } finally { button.disabled = false; button.textContent = label; }
+}
+
+// ─── The approval screen ────────────────────────────────────────────────────
+
+/* `never_filled` is rendered as prominently as `filled`, on purpose. What the agent
+   refused to answer is the half that needs a human, and a screen that buried it
+   would be inviting exactly the blind approval the design is built to avoid. */
+function showPreview(p) {
+  const ready = p.status === 'awaiting_approval';
+  const v = p.validation || {};
+  openModal(`<header><h1>${esc(p.ats)} application</h1>
+      <span class="pill ${ready ? 'ok' : 'warn'}">${esc(p.status)}</span>
+      <button class="ghost small" style="margin-left:auto" onclick="closeModal()">Close</button>
+    </header>
+    <div class="body">
+      ${p.error ? `<p class="err">${esc(p.error)}</p>` : ''}
+      ${p.blocker ? `<div class="notice warn"><strong>${esc(p.blocker)} encountered.</strong>
+        There is no setting that bypasses this. Use Take over to finish it yourself.</div>` : ''}
+
+      <dl class="kv">
+        <dt>Form</dt><dd><a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.url)}</a></dd>
+        <dt>Resume</dt><dd>${p.resume_render_id
+          ? `ATS ${pct(v.ats_score)} · evidence ${pct(v.evidence_integrity)} ·
+             <a href="${API}/resumes/renders/${p.resume_render_id}/preview"
+                target="_blank" rel="noopener">preview</a>`
+          : 'none'}</dd>
+        <dt>Browser session</dt><dd>${p.session_held
+          ? 'held open — approving submits the form you are looking at'
+          : 'not held; approving re-opens the form first'}</dd>
+      </dl>
+
+      ${p.filled?.length ? `<h3>Filled and read back (${p.filled.length})</h3>
+        <ul class="list">${p.filled.map((f) =>
+          `<li>${f.ok ? '' : '<span class="chip bad">unverified</span> '}${esc(f.label)}
+           <span class="tiny">${esc(f.detail)}</span></li>`).join('')}</ul>` : ''}
+
+      ${p.never_filled?.length ? `<h3>Left for you — never filled by the agent</h3>
+        <ul class="list cyan">${p.never_filled.map((x) =>
+          `<li>${esc(x)}</li>`).join('')}</ul>
+        <p class="tiny">Legal declarations and demographic questions. Not configurable at
+        any autonomy level — a guessed answer here is a misrepresentation on a real
+        application.</p>` : ''}
+
+      ${p.needs_user?.length ? `<h3>Needs an answer from you</h3>
+        <ul class="list warn">${p.needs_user.map((x) =>
+          `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+
+      ${p.holds?.length ? `<h3>Holding submission</h3>
+        <ul class="list bad">${p.holds.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
+        <p class="tiny">The pre-submit verdict. These run again on approval, so approving
+        does not force a submit past them.</p>` : ''}
+
+      ${p.answers?.length ? `<h3>Generated answers</h3>
+        ${p.answers.map((a) => `<div class="card" style="cursor:default">
+          <b>${esc(a.question)}</b>
+          <span class="chip ${a.outcome === 'answered' ? 'good' : 'warn'}">${esc(a.outcome)}</span>
+          <span class="chip">${esc(a.source)}</span>
+          ${a.text ? `<p style="margin:6px 0 0">${esc(a.text)}</p>` : ''}
+          ${a.reason ? `<p class="tiny" style="margin:4px 0 0">${esc(a.reason)}</p>` : ''}
+        </div>`).join('')}` : ''}
+
+      ${p.screenshots?.length ? `<h3>What the form looked like</h3>
+        <img class="shot" src="${API}/applications/${p.application_id}/screenshot/${p.screenshots.length - 1}"
+             alt="the filled form">` : ''}
+
+      <div class="actions" style="margin-top:18px">
+        ${ready ? `<button class="go" data-approve="${esc(p.application_id)}">
+          Approve and submit</button>` : ''}
+        <button class="ghost" data-takeover="${esc(p.application_id)}">Take over in a browser</button>
+        <button class="danger" data-rejectapp="${esc(p.application_id)}">Reject</button>
+      </div>
+      ${ready ? '' : `<p class="tiny" style="margin-top:8px">Not submittable as it stands.
+        Answer what is outstanding in the form yourself via Take over, or reject it.</p>`}
+    </div>`);
+}
+
+$('modal').addEventListener('click', async (event) => {
+  const approve = event.target.closest('[data-approve]');
+  const takeover = event.target.closest('[data-takeover]');
+  const rejectApp = event.target.closest('[data-rejectapp]');
+
+  if (approve) {
+    if (!confirm('Submit this application? This is irreversible.')) return;
+    approve.disabled = true;
+    approve.innerHTML = '<span class="spinner"></span> Submitting…';
+    try {
+      const data = await post(`/applications/${approve.dataset.approve}/approve`,
+        { confirm: true, field_overrides: {} });
+      const good = data.status === 'applied';
+      openModal(`<header><h1>${good ? 'Submitted' : esc(data.status)}</h1>
+          <button class="ghost small" style="margin-left:auto" onclick="closeModal()">Close</button>
+        </header><div class="body">
+        ${good
+          ? `<p class="ok">Confirmed by the page itself.</p>
+             <pre class="tiny" style="white-space:pre-wrap">${esc(JSON.stringify(data.evidence, null, 2))}</pre>`
+          : data.status === 'submission_unverified'
+            ? `<div class="notice warn"><strong>Clicked submit, saw no confirmation.</strong>
+                This is recorded as unverified rather than applied — check your email, then
+                set the status yourself. Counting it as applied would corrupt your response
+                rate and could cause a duplicate later.</div>
+               <button class="small" data-confirm="${esc(data.application_id)}">
+                 I have confirmed it went through</button>`
+            : `<p class="err">Not submitted.</p>
+               <ul class="list bad">${(data.holds || []).map((h) =>
+                 `<li>${esc(h)}</li>`).join('')}</ul>`}
+        </div>`);
+      loadStatus();
+    } catch (error) {
+      alert(error.message);
+      approve.disabled = false;
+      approve.textContent = 'Approve and submit';
+    }
+  }
+
+  if (takeover) {
+    takeover.disabled = true;
+    takeover.innerHTML = '<span class="spinner"></span> Opening a browser…';
+    try {
+      const data = await post(`/applications/${takeover.dataset.takeover}/takeover`);
+      alert(data.note || 'A browser window is open on the form.');
+      closeModal();
+    } catch (error) { alert(error.message); }
+    finally { takeover.disabled = false; takeover.textContent = 'Take over in a browser'; }
+  }
+
+  if (rejectApp) {
+    const reason = prompt('Why not this one?');
+    if (reason === null) return;
+    await post(`/applications/${rejectApp.dataset.rejectapp}/reject?reason=` +
+      encodeURIComponent(reason)).catch((error) => alert(error.message));
+    closeModal();
+    loadStatus();
+    if (current === 'queue') loadQueue();
+  }
+
+  const confirmButton = event.target.closest('[data-confirm]');
+  if (confirmButton) {
+    await post(`/applications/${confirmButton.dataset.confirm}/status`,
+      { status: 'applied', note: 'confirmed manually' }).catch((e) => alert(e.message));
+    closeModal();
+    loadStatus();
+  }
+});
+
+// ─── Queue ──────────────────────────────────────────────────────────────────
+
+async function loadQueue() {
+  const [items, sessions] = await Promise.all([
+    api('/applications/queue').catch(() => []),
+    api('/applications/sessions').catch(() => ({ sessions: [] })),
+  ]);
+
+  $('queue-notice').innerHTML =
+    `<strong>An approval authorises submitting a form that passes the pre-submit
+     verdict</strong> — not one that does not. The page is re-read and re-judged when you
+     approve, so a field that went blank in the meantime still stops the submission.`;
+
+  $('queue-list').innerHTML = items.length
+    ? `<table><thead><tr><th>Score</th><th>Role</th><th>Company</th>
+        <th>Status</th><th>Why</th><th></th></tr></thead><tbody>
+      ${items.map((item) => `<tr>
+        <td class="score ${scoreClass(item.final_score || 0)}">
+          ${item.final_score ? item.final_score.toFixed(2) : '–'}</td>
+        <td><b>${esc(item.title)}</b><div class="tiny">${esc(short(item.application_id))}</div></td>
+        <td>${esc(item.company)}</td>
+        <td><span class="chip warn">${esc(item.status)}</span></td>
+        <td class="tiny">${esc(item.needs_attention)}</td>
+        <td><button class="small" data-review="${esc(item.application_id)}">Review</button></td>
+      </tr>`).join('')}</tbody></table>`
+    : '<p class="body muted">Nothing waiting. Prepare one from the Jobs tab.</p>';
+
+  $('sessions').innerHTML = sessions.sessions?.length
+    ? `<table><thead><tr><th>Application</th><th>Idle</th><th>Alive</th><th></th></tr></thead>
+       <tbody>${sessions.sessions.map((s) => `<tr>
+         <td>${esc(short(s.application_id))}</td>
+         <td class="num">${Math.round(s.idle_seconds)}s</td>
+         <td>${s.alive ? '<span class="chip good">yes</span>' : '<span class="chip">no</span>'}</td>
+         <td><button class="small ghost" data-endsession="${esc(s.application_id)}">Close</button></td>
+       </tr>`).join('')}</tbody></table>
+       <p class="tiny" style="margin-top:10px">${esc(sessions.note || '')}</p>`
+    : `<span class="muted">None held.</span>
+       <p class="tiny">${esc(sessions.note || '')}</p>`;
+}
+
+$('queue-list').addEventListener('click', async (event) => {
+  const review = event.target.closest('[data-review]');
+  if (!review) return;
+  review.disabled = true;
+  try {
+    showPreview(await api(`/applications/${review.dataset.review}/preview`));
+  } catch (error) { alert(error.message); }
+  finally { review.disabled = false; }
+});
+
+$('sessions').addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-endsession]');
+  if (!button) return;
+  await post(`/applications/${button.dataset.endsession}/end-session`).catch(() => {});
+  loadQueue();
+});
+
+// ─── Tracker ────────────────────────────────────────────────────────────────
+
+async function loadTracker() {
+  const [board, followups] = await Promise.all([
+    api('/applications').catch(() => ({ columns: [] })),
+    api('/applications/follow-ups').catch(() => []),
+  ]);
+
+  $('board').innerHTML = board.columns?.length
+    ? board.columns.map((column) => `<div class="col">
+        <h3>${esc(column.name)} <span class="chip">${column.count}</span></h3>
+        ${column.cards.map((card) => `<div class="card" data-app="${esc(card.application_id)}">
+          <b>${esc(card.title)}</b>
+          <span class="co">${esc(card.company)}</span>
+          <div class="tiny">${esc(card.status)}${card.final_score
+            ? ' · ' + card.final_score.toFixed(2) : ''}</div>
+          ${card.needs_attention
+            ? `<span class="chip warn">${esc(card.needs_attention)}</span>` : ''}
+        </div>`).join('') || '<p class="tiny">–</p>'}
+      </div>`).join('')
+    : '<span class="muted">No applications yet.</span>';
+
+  $('followups').innerHTML = followups.length
+    ? `<table><thead><tr><th>Role</th><th>Company</th><th>Since</th><th></th></tr></thead>
+       <tbody>${followups.map((f) => `<tr>
+         <td>${esc(f.title)}</td><td>${esc(f.company)}</td>
+         <td class="tiny">${esc(f.needs_attention)}</td>
+         <td><button class="small ghost" data-app="${esc(f.application_id)}">Open</button></td>
+       </tr>`).join('')}</tbody></table>`
+    : '<p class="body muted">Nothing due.</p>';
+}
+
+for (const id of ['board', 'followups']) {
+  $(id).addEventListener('click', async (event) => {
+    const target = event.target.closest('[data-app]');
+    if (!target) return;
+    try { showTimeline(await api(`/applications/${target.dataset.app}`)); }
+    catch (error) { alert(error.message); }
+  });
+}
+
+const STATUSES = ['applied', 'interview', 'offer', 'rejected_by_company', 'withdrawn',
+  'follow_up_due'];
+
+function showTimeline(t) {
+  openModal(`<header><h1>${esc(t.job.title)}</h1>
+      <span class="pill">${esc(t.status)}</span>
+      <button class="ghost small" style="margin-left:auto" onclick="closeModal()">Close</button>
+    </header>
+    <div class="body">
+      <dl class="kv">
+        <dt>Company</dt><dd>${esc(t.job.company)} · ${esc(t.job.location || '–')}</dd>
+        <dt>Strategy / ATS</dt><dd>${esc(t.strategy)} · ${esc(t.ats || '–')}</dd>
+        <dt>Score</dt><dd>${t.scores.final ? t.scores.final.toFixed(2) : '–'}
+          (match ${t.scores.match?.toFixed?.(2) ?? '–'},
+           company ${t.scores.company?.toFixed?.(2) ?? '–'})</dd>
+        <dt>Submitted</dt><dd>${esc(t.submitted_at || 'not submitted')}</dd>
+        <dt>Attempts</dt><dd>${t.attempts}${t.last_error
+          ? ` · <span class="tiny">${esc(t.last_error)}</span>` : ''}</dd>
+      </dl>
+      ${Object.keys(t.evidence || {}).length ? `<h3>Submission evidence</h3>
+        <pre class="tiny" style="white-space:pre-wrap">${esc(JSON.stringify(t.evidence, null, 2))}</pre>
+        <p class="tiny">APPLIED is not set without something here — the state machine
+        refuses it.</p>` : ''}
+      ${t.answers?.length ? `<h3>Answers given</h3>${t.answers.map((a) =>
+        `<div class="card" style="cursor:default"><b>${esc(a.question)}</b>
+          <span class="chip">${esc(a.source)}</span>
+          <p style="margin:6px 0 0">${esc(a.answer)}</p></div>`).join('')}` : ''}
+      <h3>Timeline</h3>
+      <ul class="list">${(t.events || []).map((e) =>
+        `<li><b>${esc(e.type)}</b> <span class="tiny">${esc(e.at)}</span>
+         ${e.payload?.reason ? `<br><span class="tiny">${esc(e.payload.reason)}</span>` : ''}</li>`)
+        .join('')}</ul>
+      <h3>Record an outcome</h3>
+      <div class="row">
+        <select id="status-pick">${STATUSES.map((s) =>
+          `<option value="${s}">${s}</option>`).join('')}</select>
+        <button class="small" data-setstatus="${esc(t.application_id)}">Set</button>
+      </div>
+      <p class="tiny">Illegal transitions are refused with the legal options — the tracker
+      will not quietly coerce a status.</p>
+    </div>`);
+}
+
+$('modal').addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-setstatus]');
+  if (!button) return;
+  const status = $('status-pick').value;
+  try {
+    await post(`/applications/${button.dataset.setstatus}/status`, { status, note: '' });
+    closeModal();
+    loadTracker();
+    loadStatus();
+  } catch (error) { alert(error.message); }
+});
+
+// ─── Resumes ────────────────────────────────────────────────────────────────
+
+async function loadResumes() {
+  const [variants, renders] = await Promise.all([
+    api('/resumes/variants').catch(() => []),
+    api('/resumes/renders').catch(() => []),
+  ]);
+
+  $('archetypes').innerHTML = `<table><thead><tr>
+      <th>Archetype</th><th>Emphasises</th><th>Matches titles like</th></tr></thead><tbody>
+    ${variants.map((v) => `<tr>
+      <td><b>${esc(v.label)}</b><div class="tiny">${esc(v.id)}</div></td>
+      <td><div class="chips">${v.priority_skills.slice(0, 10).map((s) =>
+        `<span class="chip">${esc(s)}</span>`).join('') ||
+        '<span class="tiny">no fixed ordering</span>'}</div></td>
+      <td class="tiny">${v.title_markers.map(esc).join(', ') || '–'}</td>
+    </tr>`).join('')}</tbody></table>`;
+
+  $('renders').innerHTML = renders.length
+    ? `<table><thead><tr><th>Archetype</th><th>For</th><th>ATS</th><th>Evidence</th>
+        <th>Keywords</th><th>State</th><th></th></tr></thead><tbody>
+      ${renders.map((r) => `<tr>
+        <td>${esc(r.archetype)}</td>
+        <td>${esc(r.job_title || '–')}<div class="tiny">${esc(r.company || '')}</div></td>
+        <td class="num">${pct(r.ats_score)}</td>
+        <td class="num">${pct(r.evidence_integrity)}</td>
+        <td class="num">${pct(r.keyword_match)}</td>
+        <td>${r.ok ? '<span class="chip good">validated</span>'
+          : `<span class="chip bad">${r.violations} violation(s)</span>`}
+          ${(r.notes || []).some((n) => n.includes('rejected'))
+            ? '<span class="chip warn" title="a model rewrite was discarded">rewrite rejected</span>'
+            : ''}
+          <div class="tiny">${esc(r.generated_by || '')}</div></td>
+        <td><div class="actions">
+          <a class="chip cyan" href="${API}/resumes/renders/${r.id}/preview"
+             target="_blank" rel="noopener">Preview</a>
+          ${r.downloadable && r.ok
+            ? `<a class="chip good" href="${API}/resumes/renders/${r.id}/download">PDF</a>` : ''}
+          <button class="small ghost" data-render="${esc(r.id)}">Evidence</button>
+        </div></td></tr>`).join('')}</tbody></table>`
+    : '<p class="body muted">None yet. Tailor one from the Jobs tab.</p>';
+}
+
+$('renders').addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-render]');
+  if (!button) return;
+  const data = await api(`/resumes/renders/${button.dataset.render}`).catch((e) => {
+    alert(e.message); return null;
+  });
+  if (!data) return;
+  openModal(`<header><h1>Evidence behind this resume</h1>
+      <button class="ghost small" style="margin-left:auto" onclick="closeModal()">Close</button>
+    </header><div class="body">
+    <p class="muted">Every fact this render cites, with the line of your resume it came
+    from. This is what makes "where did that bullet come from?" answerable.</p>
+    <table><thead><tr><th>Kind</th><th>Fact</th><th>Source line</th><th></th></tr></thead>
+    <tbody>${(data.evidence || []).map((f) => `<tr>
+      <td class="tiny">${esc(f.kind)}</td><td>${esc(f.label)}</td>
+      <td class="tiny">${esc(f.locator)}</td>
+      <td>${f.verified ? '<span class="chip good">verified</span>'
+        : '<span class="chip">unverified</span>'}</td>
+    </tr>`).join('')}</tbody></table>
+    </div>`);
+});
+
+// ─── Companies ──────────────────────────────────────────────────────────────
+
+async function loadCompanies() {
+  const rows = await api('/companies?limit=100').catch(() => []);
+  const researched = rows.filter((r) => r.fit_score !== null && r.fit_score !== undefined);
+  $('companies').innerHTML = rows.length
+    ? `<table><thead><tr><th>Fit</th><th>Company</th><th>Boards</th><th></th></tr></thead>
+       <tbody>${rows.sort((a, b) => (b.fit_score ?? -1) - (a.fit_score ?? -1)).map((c) => `<tr>
+         <td class="score ${scoreClass(c.fit_score ?? 0)}">${c.fit_score !== null &&
+           c.fit_score !== undefined ? c.fit_score.toFixed(2) : '–'}</td>
+         <td><b>${esc(c.name)}</b>${c.domain
+           ? `<div class="tiny">${esc(c.domain)}</div>` : ''}</td>
+         <td class="tiny">${(c.boards || []).map((b) =>
+           `${esc(b.provider)}:${esc(b.slug)}`).join('<br>') || '–'}</td>
+         <td><button class="small ghost" data-company="${esc(c.id)}">Details</button>
+           <button class="small ghost" data-openings="${esc(c.id)}">Openings</button></td>
+       </tr>`).join('')}</tbody></table>
+       <p class="body tiny">${researched.length} of ${rows.length} researched. Research reads
+       only the home, about and careers pages, with robots.txt honoured — no enrichment
+       vendor and no profile scraping.</p>`
+    : '<p class="body muted">No companies yet. Run a search.</p>';
+}
+
+/* Applying to a company rather than to a job.
+
+   The list is shown before anything happens, with the skipped openings visible and their
+   reasons attached, because the decision this page exists to support is "which of these",
+   not "all of them". Checkboxes start ticked only up to what today's cap allows — the rest
+   are still selectable, but the user is choosing to go over rather than being walked over
+   the line. Nothing here submits; each opening ends in the approval queue. */
+async function showOpenings(companyId) {
+  openModal(`<header><h1>Openings</h1>
+    <button class="ghost small" style="margin-left:auto" onclick="closeModal()">Close</button>
+    </header><div class="body"><span class="spinner"></span> Reading their careers board…</div>`);
+
+  let data;
+  try {
+    data = await api(`/companies/${companyId}/openings?refresh=true`);
+  } catch (error) {
+    $('modal').innerHTML = `<header><h1>Openings</h1>
+      <button class="ghost small" style="margin-left:auto" onclick="closeModal()">Close</button>
+      </header><div class="body"><strong>${esc(error.message)}</strong></div>`;
+    return;
+  }
+
+  const open = data.openings.filter((o) => o.applyable);
+  const skipped = data.openings.filter((o) => !o.applyable);
+  const preselect = new Set(data.would_prepare_now || []);
+
+  $('modal').innerHTML = `<header><h1>${esc(data.company)}</h1>
+      <span class="pill">${data.applyable} of ${data.total_openings} worth applying to</span>
+      <button class="ghost small" style="margin-left:auto" onclick="closeModal()">Close</button>
+    </header><div class="body">
+    <div class="notice">${esc(data.note)}
+      ${data.newly_discovered
+        ? ` <strong>${data.newly_discovered} new since last time.</strong>` : ''}</div>
+
+    ${open.length ? `<table><thead><tr><th></th><th>Score</th><th>Role</th>
+        <th>Location</th></tr></thead><tbody>
+      ${open.map((o) => `<tr>
+        <td><input type="checkbox" data-opening="${esc(o.job_id)}"
+          ${preselect.has(o.job_id) ? 'checked' : ''}></td>
+        <td class="score ${scoreClass(o.score)}">${o.score.toFixed(2)}</td>
+        <td>${esc(o.title)}</td>
+        <td class="tiny muted">${esc(o.location || '–')}</td>
+      </tr>`).join('')}</tbody></table>
+
+      <div class="actions" style="margin-top:16px">
+        <button class="small" data-applycompany="${esc(data.company_id)}">
+          Prepare selected</button>
+        <span class="tiny muted">Each opening gets its own tailored resume. Nothing is
+        submitted — they go to your approval queue.</span>
+      </div>`
+      : '<p class="muted">Nothing here is worth applying to right now.</p>'}
+
+    ${skipped.length ? `<h3>Not applying, and why</h3>
+      <table><tbody>${skipped.map((o) => `<tr>
+        <td class="tiny muted">${esc(o.title)}</td>
+        <td class="tiny s-lo">${esc(o.skipped)}</td>
+      </tr>`).join('')}</tbody></table>` : ''}
+    </div>`;
+}
+
+/* Read a company's own team and leadership pages.
+
+   Slow — it fetches up to five pages — and often finds nobody, which is the intended
+   behaviour rather than a failure: a modern team page is usually JavaScript-rendered, and
+   inventing people to fill the table would be far worse than an empty one. */
+async function discoverPeople(button) {
+  button.disabled = true;
+  button.innerHTML = '<span class="spinner"></span> Reading their pages…';
+  try {
+    const data = await post(`/companies/${button.dataset.findpeople}/people`);
+    closeModal();
+    alert(`${data.note}\n\nPages read: ${(data.pages_read || []).join(', ') || 'none'}`);
+    show('people');
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Find people';
+  }
+}
+
+async function applyToCompany(button) {
+  const chosen = [...document.querySelectorAll('[data-opening]:checked')]
+    .map((box) => box.dataset.opening);
+  if (!chosen.length) { alert('Nothing selected.'); return; }
+  if (!confirm(`Prepare ${chosen.length} application(s)? Each gets its own tailored resume. `
+    + 'None will be submitted — they go to your approval queue.')) return;
+
+  button.disabled = true;
+  button.innerHTML = '<span class="spinner"></span> Preparing…';
+  try {
+    const data = await post(`/companies/${button.dataset.applycompany}/apply`,
+      { job_ids: chosen });
+    closeModal();
+    alert(data.note);
+    loadQueue(); loadStatus();
+  } catch (error) {
+    alert(error.message);
+    button.disabled = false;
+    button.textContent = 'Prepare selected';
+  }
+}
+
+$('companies').addEventListener('click', async (event) => {
+  const openings = event.target.closest('[data-openings]');
+  if (openings) { showOpenings(openings.dataset.openings); return; }
+  const details = event.target.closest('[data-company]');
+  if (!details) return;
+  const data = await api(`/companies/${details.dataset.company}`).catch((e) => {
+    alert(e.message); return null;
+  });
+  if (!data) return;
+  openModal(`<header><h1>${esc(data.name)}</h1>
+      <span class="pill">${data.fit_score !== null && data.fit_score !== undefined
+        ? 'fit ' + data.fit_score.toFixed(2) : 'not researched'}</span>
+      <button class="ghost small" style="margin-left:auto" onclick="closeModal()">Close</button>
+    </header><div class="body">
+    <dl class="kv">
+      <dt>Website</dt><dd>${data.website
+        ? `<a href="${esc(data.website)}" target="_blank" rel="noopener">${esc(data.website)}</a>`
+        : '–'}</dd>
+      <dt>Industry</dt><dd>${esc(data.industry || '–')}</dd>
+      <dt>Apparent size</dt><dd>${esc(data.size_band || '–')}</dd>
+      <dt>Location</dt><dd>${esc(data.hq_location || '–')}</dd>
+      <dt>AI relevance</dt><dd>${data.ai_relevance ?? '–'}/100</dd>
+    </dl>
+    ${data.description ? `<p class="muted" style="margin-top:12px">${esc(data.description)}</p>` : ''}
+    ${data.tech_focus?.length ? `<h3>Technology they name</h3>
+      <div class="chips">${data.tech_focus.map((t) =>
+        `<span class="chip">${esc(t)}</span>`).join('')}</div>` : ''}
+    ${data.fit_reasons?.length ? `<h3>Why this score</h3>
+      <ul class="list">${data.fit_reasons.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>` : ''}
+    ${data.signals?.staffing_language ? `<div class="notice warn" style="margin-top:12px">
+      <strong>Staffing / consultancy language on their site:</strong>
+      ${esc(data.signals.staffing_language)}. Not a disqualifier — a different kind of job,
+      and worth knowing before you apply.</div>` : ''}
+    <div class="actions" style="margin-top:16px">
+      <button class="small ghost" data-research="${esc(data.id)}">Re-research</button>
+      <button class="small ghost" data-discoverats="${esc(data.id)}">Find their ATS</button>
+      <button class="small ghost" data-draft="${esc(data.id)}">Draft outreach</button>
+      <button class="small ghost" data-findpeople="${esc(data.id)}">Find people</button>
+      <button class="small" data-openings="${esc(data.id)}">All their openings</button>
+    </div></div>`);
+});
+
+$('modal').addEventListener('click', async (event) => {
+  const openings = event.target.closest('[data-openings]');
+  if (openings) { showOpenings(openings.dataset.openings); return; }
+  const applyCompany = event.target.closest('[data-applycompany]');
+  if (applyCompany) { applyToCompany(applyCompany); return; }
+  const findPeople = event.target.closest('[data-findpeople]');
+  if (findPeople) { discoverPeople(findPeople); return; }
+  const research = event.target.closest('[data-research]');
+  const discover = event.target.closest('[data-discoverats]');
+  const draft = event.target.closest('[data-draft]');
+  if (research) {
+    research.disabled = true;
+    research.innerHTML = '<span class="spinner"></span>';
+    try {
+      await post(`/companies/${research.dataset.research}/research`, { refresh: true });
+      closeModal(); loadCompanies(); loadStatus();
+    } catch (error) { alert(error.message); research.disabled = false; }
+  }
+  if (discover) {
+    discover.disabled = true;
+    try {
+      const data = await post(`/companies/${discover.dataset.discoverats}/discover-ats`);
+      alert(data.found.length
+        ? 'Found: ' + data.found.map((f) => `${f.provider}:${f.slug}`).join(', ')
+        : (data.note || 'nothing found'));
+    } catch (error) { alert(error.message); }
+    finally { discover.disabled = false; }
+  }
+  if (draft) {
+    draft.disabled = true;
+    draft.innerHTML = '<span class="spinner"></span>';
+    try {
+      const data = await post('/outreach/draft', { company_id: draft.dataset.draft, queue: true });
+      showDraft(data);
+    } catch (error) { alert(error.message); draft.disabled = false; }
+  }
+});
+
+function showDraft(data) {
+  const d = data.draft || {};
+  openModal(`<header><h1>Outreach draft</h1>
+      <span class="pill ${d.ok ? 'ok' : 'warn'}">${d.ok ? 'grounded' : 'not usable'}</span>
+      <button class="ghost small" style="margin-left:auto" onclick="closeModal()">Close</button>
+    </header><div class="body">
+      ${d.ok ? '' : `<div class="notice warn">${esc(data.note || d.reason || '')}</div>`}
+      ${d.subject ? `<p><b>${esc(d.subject)}</b></p>` : ''}
+      <p style="white-space:pre-wrap">${esc(d.body || '(nothing produced)')}</p>
+      ${data.queued ? `<div class="actions" style="margin-top:16px">
+        <button class="small" data-approveoutreach="${esc(data.outreach_id)}">Approve</button>
+      </div><p class="tiny">Approving does not send. Sending is a separate act, rate limited,
+      and records the message as sent rather than delivering mail for you.</p>` : ''}
+    </div>`);
+}
+
+// ─── Outreach ───────────────────────────────────────────────────────────────
+
+/* Gmail: connected or not, and the one link that can change that.
+
+   Consent is interactive and cannot be done on the user's behalf, so this shows the link
+   rather than following it, and names the scope plainly — send-only, which cannot read a
+   mailbox. Sending still requires an approved message and a second explicit confirm. */
+async function loadGmail() {
+  let data;
+  try {
+    data = await api('/outreach/gmail/status');
+  } catch (error) {
+    $('gmail-status').innerHTML = `<span class="s-lo">${esc(error.message)}</span>`;
+    return;
+  }
+
+  const state = !data.configured ? ['s-lo', 'no OAuth client']
+    : !data.authorised ? ['s-mid', 'not connected']
+    : data.working === false ? ['s-mid', 'connected, not answering']
+    : ['s-hi', `connected as ${data.account || 'your account'}`];
+
+  $('gmail-status').innerHTML =
+    `<strong class="${state[0]}">${esc(state[1])}</strong>
+     <p class="tiny muted" style="margin-top:6px">${esc(data.note || '')}</p>`;
+
+  $('gmail-actions').innerHTML = data.authorised
+    ? '<button class="ghost small" id="gmail-disconnect">Disconnect</button>'
+    : (data.configured ? '<button class="small" id="gmail-connect">Connect Gmail</button>' : '');
+
+  const connect = $('gmail-connect');
+  if (connect) connect.addEventListener('click', async () => {
+    try {
+      const { url, note } = await api('/outreach/gmail/authorize');
+      if (confirm(`${note}
+
+Open Google's consent page now?`)) window.open(url, '_blank');
+    } catch (error) { alert(error.message); }
+  });
+
+  const disconnect = $('gmail-disconnect');
+  if (disconnect) disconnect.addEventListener('click', async () => {
+    if (!confirm('Delete the stored token? You can reconnect at any time.')) return;
+    try { await post('/outreach/gmail/disconnect'); loadGmail(); }
+    catch (error) { alert(error.message); }
+  });
+}
+
+async function loadOutreach() {
+  loadGmail();
+  const [board, ops] = await Promise.all([
+    api('/outreach').catch(() => ({ buckets: {}, limits: {} })),
+    api('/outreach/opportunities').catch(() => ({ companies: [] })),
+  ]);
+  const limits = board.limits || {};
+  $('outreach-limits').innerHTML = `
+    <div class="stat"><b>${limits.sent_today ?? 0}/${limits.day_limit ?? '–'}</b>
+      <span>sent today</span></div>
+    <div class="stat"><b>${limits.sent_this_week ?? 0}/${limits.week_limit ?? '–'}</b>
+      <span>this week</span></div>
+    <div class="stat"><b>${board.sent ?? 0}</b><span>total sent</span></div>
+    <div class="stat"><b>${board.replied ?? 0}</b><span>replied</span></div>
+    <div class="stat"><b>${board.reply_rate !== null && board.reply_rate !== undefined
+      ? pct(board.reply_rate) : '–'}</b><span>reply rate</span></div>`;
+
+  $('outreach-ops').innerHTML = ops.companies?.length
+    ? `<table><thead><tr><th>Fit</th><th>Company</th><th>Industry</th>
+        <th>Channel</th><th></th></tr></thead><tbody>
+      ${ops.companies.map((c) => `<tr>
+        <td class="score ${scoreClass(c.fit_score)}">${c.fit_score.toFixed(2)}</td>
+        <td><b>${esc(c.name)}</b><div class="tiny">${esc(c.domain || '')}</div></td>
+        <td class="tiny">${esc(c.industry || '–')}</td>
+        <td>${c.contactable
+          ? `<span class="chip good">${c.contacts.length} recorded</span>`
+          : '<span class="chip">none recorded</span>'}</td>
+        <td><div class="actions">
+          <button class="small" data-draft2="${esc(c.company_id)}">Draft</button>
+          <button class="small ghost" data-contact="${esc(c.company_id)}">Add contact</button>
+        </div></td></tr>`).join('')}</tbody></table>
+      ${ops.note ? `<p class="body tiny">${esc(ops.note)}</p>` : ''}`
+    : `<p class="body muted">No companies qualify yet. They need a researched fit above 0.7,
+       no live application, and no contact in the last 30 days.</p>`;
+
+  const buckets = Object.entries(board.buckets || {});
+  $('outreach-list').innerHTML = buckets.length
+    ? buckets.map(([state, items]) => `<details open><summary>${esc(state)} · ${items.length}</summary>
+        <div class="body">${items.map((item) => `<div class="card" style="cursor:default">
+          <b>${esc(item.company)}</b> <span class="chip">${esc(item.channel)}</span>
+          ${item.follow_up_due ? '<span class="chip warn">follow-up due</span>' : ''}
+          <div class="tiny">${esc(item.subject)}</div>
+          <p style="margin:6px 0 0;white-space:pre-wrap">${esc(item.body)}</p>
+          <div class="actions" style="margin-top:8px">
+            ${state === 'awaiting_approval' || state === 'drafted'
+              ? `<button class="small" data-approveoutreach="${esc(item.id)}">Approve</button>` : ''}
+            ${state === 'approved'
+              ? `<button class="small go" data-sendoutreach="${esc(item.id)}">Mark sent</button>` : ''}
+            ${state === 'sent' || state === 'follow_up_due'
+              ? `<button class="small ghost" data-replyoutreach="${esc(item.id)}">Got a reply</button>` : ''}
+            ${state !== 'sent' && state !== 'replied'
+              ? `<button class="small danger" data-canceloutreach="${esc(item.id)}">Cancel</button>` : ''}
+          </div></div>`).join('')}</div></details>`).join('')
+    : '<p class="body muted">Nothing drafted.</p>';
+}
+
+for (const id of ['outreach-ops', 'outreach-list', 'modal']) {
+  $(id).addEventListener('click', async (event) => {
+    const handlers = [
+      ['draft2', async (v) => showDraft(await post('/outreach/draft', { company_id: v, queue: true }))],
+      ['approveoutreach', async (v) => { await post(`/outreach/${v}/approve`); }],
+      ['sendoutreach', async (v) => {
+        if (!confirm('Mark this as sent? Send the text from your own mailbox.')) return;
+        const data = await post(`/outreach/${v}/send?confirm=true`);
+        alert(data.note);
+      }],
+      ['replyoutreach', async (v) => { await post(`/outreach/${v}/reply`, { replied: true }); }],
+      ['canceloutreach', async (v) => { await post(`/outreach/${v}/cancel`); }],
+      ['contact', async (v) => {
+        const address = prompt('Email address or contact URL:');
+        if (!address) return;
+        const source = prompt(
+          'Where did this come from?\n' +
+          'careers_page | job_posting | company_contact_page | press_page | user_entered',
+          'careers_page');
+        if (!source) return;
+        await post('/outreach/contacts', {
+          company_id: v, channel: address.includes('@') ? 'email' : 'contact_form',
+          address, source,
+        });
+        alert('Recorded.');
+      }],
+    ];
+    for (const [key, handler] of handlers) {
+      const target = event.target.closest(`[data-${key}]`);
+      if (!target) continue;
+      target.disabled = true;
+      try { await handler(target.dataset[key]); if (key !== 'draft2') { closeModal(); } }
+      catch (error) { alert(error.message); }
+      finally { target.disabled = false; }
+      if (current === 'outreach') loadOutreach();
+      return;
+    }
+  });
+}
+
+// ─── Analytics ──────────────────────────────────────────────────────────────
+
+/* Who is worth contacting, and on what evidence.
+
+   Relevance leads the table because it is the only column that answers the question the
+   page exists for. Provenance sits beside every contact detail: a page that shows an
+   address without saying where it came from invites somebody to trust a guess. */
+const VERIFICATION = {
+  verified:   ['s-hi',  'verified'],
+  unverified: ['s-mid', 'unverified'],
+  inferred:   ['s-lo',  'inferred — never sent to'],
+  unknown:    ['',      'unknown'],
+};
+
+let peopleFilters = null;
+
+async function loadPeople() {
+  if (!peopleFilters) {
+    peopleFilters = true;
+    try {
+      const { functions } = await api('/people/functions');
+      $('people-function').innerHTML = '<option value="">any</option>' +
+        functions.map((f) => `<option value="${esc(f)}">${esc(f.replace('_', '/'))}</option>`).join('');
+    } catch (error) { /* the filter is a convenience; the list still works without it */ }
+    for (const id of ['people-function', 'people-min', 'people-seniority', 'people-hiring',
+                      'people-email', 'people-li', 'people-contactable'])
+      $(id).addEventListener('change', () => loadPeople());
+    $('people-refresh').addEventListener('click', () => loadPeople());
+  }
+
+  const query = new URLSearchParams();
+  const fn = $('people-function').value;           if (fn) query.set('function', fn);
+  const min = $('people-min').value;               if (min !== '0') query.set('min_relevance', min);
+  const sen = $('people-seniority').value;         if (sen) query.set('min_seniority', sen);
+  if ($('people-hiring').checked)      query.set('hiring_authority', 'true');
+  if ($('people-email').checked)       query.set('has_email', 'true');
+  if ($('people-li').checked)          query.set('has_linkedin', 'true');
+  if ($('people-contactable').checked) query.set('contactable_only', 'true');
+
+  let data;
+  try {
+    data = await api(`/people?${query}`);
+  } catch (error) {
+    $('people-notice').innerHTML = `<strong>${esc(error.message)}</strong>`;
+    return;
+  }
+
+  $('people-notice').innerHTML =
+    `<strong>${data.count} shown, ${data.contactable} contactable.</strong> ${esc(data.note)}`;
+
+  $('people-table').innerHTML = data.people.length
+    ? `<table><thead><tr><th>Relevance</th><th>Person</th><th>Company</th>
+         <th>Email</th><th>LinkedIn</th><th>Recommended</th></tr></thead><tbody>` +
+      data.people.map((p) => {
+        const [cls, label] = VERIFICATION[p.email_verification] || VERIFICATION.unknown;
+        const why = (p.relevance_reasons || [])[0] || '';
+        return `<tr>
+          <td class="score ${p.relevance >= 75 ? 's-hi' : p.relevance >= 45 ? 's-mid' : 's-lo'}">
+            ${p.relevance}<div class="tiny muted">conf ${p.relevance_confidence}</div></td>
+          <td><b>${esc(p.name)}</b>
+            <div class="tiny">${esc(p.title || 'role unknown')}</div>
+            ${why ? `<div class="tiny muted">${esc(why)}</div>` : ''}</td>
+          <td class="tiny">${esc(p.company)}
+            ${p.hiring_authority ? '<div class="tiny s-hi">can hire</div>' : ''}</td>
+          <td class="tiny">${p.email
+            ? `${esc(p.email)}<div class="${cls} tiny">${esc(label)}${
+                p.email_kind === 'generic_company' ? ' · a department, not a person' : ''}</div>
+               ${p.email_source ? `<a class="tiny muted" href="${esc(p.email_source)}" target="_blank" rel="noopener">source</a>` : ''}`
+            : '<span class="muted">none published</span>'}</td>
+          <td class="tiny">${p.linkedin_url
+            ? `<a href="${esc(p.linkedin_url)}" target="_blank" rel="noopener">profile</a>`
+            : '<span class="muted">–</span>'}</td>
+          <td class="tiny">${esc(p.recommended_channel || '–')}
+            ${p.contactable_now ? '' : '<div class="tiny muted">not sent automatically</div>'}</td>
+        </tr>`;
+      }).join('') + '</tbody></table>'
+    : '<p class="body muted">Nobody matches these filters.</p>';
+}
+
+/* API keys and their remaining quota.
+
+   The page loads without probing. Checking a balance is free at most providers but a few
+   can only be checked by making a real call against the quota being reported, so those are
+   labelled rather than silently spent. */
+const KEY_STATUS = {
+  ok:            ['s-hi',  'working'],
+  configured:    ['',      'set, not checked'],
+  needs_consent: ['s-mid', 'needs your consent'],
+  invalid:       ['s-lo',  'key rejected'],
+  exhausted:     ['s-lo',  'out of quota'],
+  unreachable:   ['s-mid', 'unreachable'],
+  no_key:        ['',      'not set'],
+  unknown:       ['',      'unknown'],
+};
+
+async function loadKeys(probe) {
+  const button = $('keys-check');
+  if (!button.dataset.wired) {
+    button.dataset.wired = '1';
+    button.addEventListener('click', () => loadKeys(true));
+  }
+  if (probe) {
+    button.disabled = true;
+    button.textContent = 'Checking…';
+  }
+
+  let data;
+  try {
+    data = await api(`/integrations?probe=${probe ? 'true' : 'false'}`);
+  } catch (error) {
+    $('keys-notice').innerHTML = `<strong>${esc(error.message)}</strong>`;
+    return;
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Check balances';
+  }
+
+  const problems = data.problems || [];
+  const low = data.running_low || [];
+  $('keys-notice').innerHTML =
+    `<strong>${data.configured} of ${data.total} configured.</strong> ` +
+    (problems.length ? `<span class="s-lo">Needs attention: ${problems.map(esc).join(', ')}.</span> ` : '') +
+    (low.length ? `<span class="s-mid">Running low: ${low.map(esc).join(', ')}.</span> ` : '') +
+    (!problems.length && !low.length && probe ? 'Everything checked is healthy. ' : '') +
+    esc(data.note || '');
+
+  const set = (data.integrations || []).filter((i) => i.configured);
+  const unset = (data.integrations || []).filter((i) => !i.configured);
+
+  $('keys-table').innerHTML = set.length
+    ? `<table><thead><tr><th>Service</th><th>Key</th><th>Status</th><th>Used</th>
+         <th>Remaining</th><th>Powers</th></tr></thead><tbody>` +
+      set.map((i) => {
+        const [cls, label] = KEY_STATUS[i.status] || KEY_STATUS.unknown;
+        const q = i.quota || {};
+        const pctUsed = q.fraction_used !== null && q.fraction_used !== undefined
+          ? ` (${(q.fraction_used * 100).toFixed(0)}%)` : '';
+        const used = q.used === null || q.used === undefined
+          ? '–'
+          : `${q.used}${q.limit ? ` / ${q.limit}` : ''} ${esc(q.unit || '')}${pctUsed}`;
+        return `<tr>
+          <td><strong>${esc(i.label)}</strong>${i.optional ? '' : ' <span class="tiny">required</span>'}</td>
+          <td class="tiny muted">${esc(i.key || '')}</td>
+          <td class="${cls}">${esc(label)}${i.costs_a_call ? ' <span class="tiny muted">· checking costs a call</span>' : ''}</td>
+          <td class="tiny">${esc(used)}
+            <span class="muted">${esc(q.source || '')}${q.note && q.source === 'provider' ? ` · ${esc(q.note)}` : ''}</span></td>
+          <td class="tiny">${q.remaining === null || q.remaining === undefined ? '–' : esc(String(q.remaining))}</td>
+          <td class="tiny muted">${esc(i.powers)}</td>
+        </tr>`;
+      }).join('') + '</tbody></table>'
+    : '<p class="body muted">No keys configured yet.</p>';
+
+  $('keys-missing').innerHTML = unset.length
+    ? `<table><thead><tr><th>Service</th><th>What it would add</th><th>Get one</th></tr></thead><tbody>` +
+      unset.map((i) => `<tr>
+        <td>${esc(i.label)}${i.optional ? '' : ' <span class="s-lo tiny">required</span>'}</td>
+        <td class="tiny">${esc(i.powers)}</td>
+        <td class="tiny"><a href="${esc(i.signup)}" target="_blank" rel="noopener">${esc(i.env_vars[0])}</a></td>
+      </tr>`).join('') + '</tbody></table>'
+    : '<p class="body muted">Everything is configured.</p>';
+}
+
+/* What the user is looking for. Every option offered here is one the scorer acts on —
+   a dropdown containing a value it does not understand produces a setting that silently
+   does nothing, which is worse than not offering it. */
+let prefOptions = null;
+
+async function loadPreferences() {
+  if (!prefOptions) {
+    prefOptions = await api('/preferences/options').catch(() => null);
+    if (!prefOptions) return;
+
+    $('pref-band').innerHTML =
+      '<option value="">Not set — everything ranks equally</option>' +
+      prefOptions.experience_bands
+        .map((b) => `<option value="${esc(b.value)}">${esc(b.label)}</option>`)
+        .join('');
+    $('pref-modes').innerHTML = prefOptions.work_modes
+      .map((m) => `<label style="display:block"><input type="checkbox" data-mode="${esc(m.value)}">
+        ${esc(m.label)}</label>`).join('');
+    $('pref-types').innerHTML = prefOptions.employment_types
+      .map((t) => `<label style="display:block"><input type="checkbox" data-type="${esc(t.value)}">
+        ${esc(t.label)}</label>`).join('');
+
+    $('pref-band').addEventListener('change', showBandNote);
+    $('pref-save').addEventListener('click', savePreferences);
+  }
+
+  const current = await api('/preferences').catch(() => null);
+  if (!current) return;
+  const config = current.config || {};
+
+  $('pref-band').value = config.experience_band || '';
+  $('pref-roles').value = (config.roles || []).join(', ');
+  $('pref-locations').value = (config.locations || []).join(', ');
+  $('pref-blocked').value = (config.companies_blocked || []).join(', ');
+  $('pref-age').value = config.max_job_age_days || 30;
+  for (const box of document.querySelectorAll('[data-mode]'))
+    box.checked = (config.work_modes || []).includes(box.dataset.mode);
+  for (const box of document.querySelectorAll('[data-type]'))
+    box.checked = (config.employment_types || []).includes(box.dataset.type);
+
+  showBandNote();
+  renderEffects(current);
+}
+
+function showBandNote() {
+  const chosen = $('pref-band').value;
+  const entry = (prefOptions?.experience_bands || []).find((b) => b.value === chosen);
+  const junior = (prefOptions?.junior_bands || []).includes(chosen);
+  $('pref-band-note').innerHTML = entry
+    ? esc(entry.note) + (junior
+        ? ' — <strong>senior and lead roles are removed from your results</strong>, not just ranked lower.'
+        : '')
+    : 'Without this, a senior architect role can outrank an internship.';
+}
+
+function renderEffects(payload) {
+  $('pref-effects').innerHTML = (payload.effects || []).length
+    ? '<ul class="tiny">' + payload.effects.map((e) => `<li>${esc(e)}</li>`).join('') + '</ul>' +
+      (payload.note ? `<p class="tiny muted">${esc(payload.note)}</p>` : '')
+    : '<p class="muted">Nothing set yet.</p>';
+  $('pref-notice').innerHTML = payload.is_set
+    ? '<strong>Preferences are set.</strong> New searches and monitoring use them immediately.'
+    : '<strong>Nothing set yet.</strong> Until you answer these, everything ranks as though ' +
+      'any job anywhere at any level would suit you equally.';
+}
+
+const splitList = (id) =>
+  $(id).value.split(',').map((s) => s.trim()).filter(Boolean);
+
+async function savePreferences() {
+  const button = $('pref-save');
+  button.disabled = true;
+  button.textContent = 'Saving…';
+  try {
+    const payload = await put('/preferences', {
+      roles: splitList('pref-roles'),
+      locations: splitList('pref-locations'),
+      companies_blocked: splitList('pref-blocked'),
+      experience_band: $('pref-band').value || null,
+      work_modes: [...document.querySelectorAll('[data-mode]:checked')].map((b) => b.dataset.mode),
+      employment_types: [...document.querySelectorAll('[data-type]:checked')].map((b) => b.dataset.type),
+      max_job_age_days: Number($('pref-age').value) || 30,
+    });
+    renderEffects(payload);
+  } catch (error) {
+    $('pref-notice').innerHTML = `<strong>${esc(error.message)}</strong>`;
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Save';
+  }
+}
+
+/* Career monitoring. The sweep is a button rather than something the page load triggers:
+   opening a dashboard tab should not reach out to seventy-nine companies' servers. */
+async function loadWatch() {
+  const button = $('watch-sweep');
+  if (!button.dataset.wired) {
+    button.dataset.wired = '1';
+    button.addEventListener('click', () => runSweep(false));
+    $('watch-dry').addEventListener('click', () => runSweep(true));
+  }
+  await Promise.all([refreshWatchState(), refreshWatchFinds()]);
+}
+
+async function refreshWatchState() {
+  const state = await api('/monitor').catch(() => null);
+  if (!state) return;
+
+  $('watch-stats').innerHTML = `
+    <div><strong>${state.boards_watched}</strong><br><span class="tiny muted">boards watched</span></div>
+    <div><strong>${state.boards_due_now}</strong><br><span class="tiny muted">due now</span></div>
+    <div><strong>${state.boards_given_up_on}</strong><br><span class="tiny muted">given up on</span></div>
+    <div><strong>${state.running ? 'running' : 'manual'}</strong><br>
+      <span class="tiny muted">background loop</span></div>`;
+
+  $('watch-notice').innerHTML = state.enabled
+    ? `<strong>Watching automatically.</strong> Every ${state.tick_minutes} minutes it checks
+       whether any board is due, and reads up to ${state.boards_per_sweep} of them.`
+    : `<strong>Manual.</strong> The background loop is off — use <em>Check now</em>, or set
+       <code>CAREERAGENT_MONITOR_ENABLED=true</code> to have the server watch on its own.`;
+
+  $('watch-boards').innerHTML = (state.next_checks || []).length
+    ? `<table><thead><tr><th>Board</th><th class="num">Every</th>
+         <th class="num">New seen</th><th>Next check</th></tr></thead><tbody>` +
+      state.next_checks.map((b) => `<tr>
+        <td>${esc(b.provider)} / ${esc(b.slug)}</td>
+        <td class="num">${b.every_hours}h</td>
+        <td class="num">${b.new_jobs_seen}</td>
+        <td class="tiny muted">${esc((b.at || '').slice(0, 16).replace('T', ' '))}</td>
+      </tr>`).join('') + '</tbody></table>'
+    : '<p class="body muted">No board has been checked yet. Run a campaign first.</p>';
+}
+
+async function refreshWatchFinds() {
+  const found = await api('/monitor/new?since_hours=168&limit=25').catch(() => ({ jobs: [] }));
+  $('watch-new').innerHTML = (found.jobs || []).length
+    ? `<table><thead><tr><th class="num">Score</th><th>Role</th><th>Company</th>
+         <th>Location</th><th>First seen</th></tr></thead><tbody>` +
+      found.jobs.map((j) => `<tr>
+        <td class="num ${scoreClass(j.score)}">${pct(j.score)}</td>
+        <td>${esc(j.title)}</td>
+        <td>${esc(j.company)}</td>
+        <td class="tiny">${esc(j.location || '')}</td>
+        <td class="tiny muted">${esc((j.first_seen || '').slice(0, 10))}</td>
+      </tr>`).join('') + '</tbody></table>'
+    : '<p class="body muted">Nothing new in the last week.</p>';
+}
+
+async function runSweep(dryRun) {
+  const button = dryRun ? $('watch-dry') : $('watch-sweep');
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Checking…';
+  try {
+    const report = await post(`/monitor/sweep?dry_run=${dryRun}`, {});
+    $('watch-notice').innerHTML =
+      `<strong>${esc(report.summary)}</strong>` +
+      (dryRun ? ' <em>Nothing was stored.</em>' : '') +
+      ' Nothing was applied to.';
+    if (!dryRun) await Promise.all([refreshWatchState(), refreshWatchFinds()]);
+  } catch (error) {
+    $('watch-notice').innerHTML = `<strong>${esc(error.message)}</strong>`;
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
+}
+
+/* The career graph — a projection over the relational tables, never a second store.
+
+   The layout is hand-rolled rather than a library: the dashboard has no build step and no
+   CDN, and a view of your own career data that stops working offline is not much of one. */
+const GRAPH_COLOURS = {
+  candidate: '#e3c07b', skill: '#7bb3e3', job: '#8fd18f', company: '#d18f8f',
+  application: '#c99ae0', fact: '#8a8a8a', ats: '#6f9f9f', location: '#b0a07a',
+  /* People and what happens after you write to them. Warm hues, because these are the
+     nodes that are actual humans and the ones a misclick costs something. */
+  person: '#e0a4b0', role: '#c7b3d6', department: '#9fb8c9', outreach: '#e8b478',
+  contact: '#e0a4b0', interview: '#8fd1c0', offer: '#7bd18f', lead: '#d6c08f',
+  resume_version: '#b8b8d6',
+};
+
+let graphState = { nodes: [], edges: [], root: null, frame: 0 };
+
+async function loadGraph() {
+  const canvas = $('graph-canvas');
+  if (!canvas.dataset.wired) {
+    canvas.dataset.wired = '1';
+    canvas.addEventListener('click', onGraphClick);
+    $('graph-home').addEventListener('click', () => drawGraphFor(null));
+    $('graph-depth').addEventListener('change', () => {
+      if (graphState.root) drawGraphFor(graphState.root);
+    });
+  }
+  await drawGraphFor(graphState.root);
+  await loadGraphQuestions();
+}
+
+async function drawGraphFor(nodeId) {
+  const depth = Number($('graph-depth').value) || 1;
+  const path = nodeId
+    ? `/graph/around?node=${encodeURIComponent(nodeId)}&depth=${depth}`
+    : '/graph';
+  const data = await api(path).catch((error) => ({ nodes: [], edges: [], error: error.message }));
+
+  graphState.root = nodeId;
+  graphState.nodes = (data.nodes || []).map((n, i) => ({
+    ...n,
+    x: 300 + Math.cos((i / Math.max(data.nodes.length, 1)) * Math.PI * 2) * 180 + Math.random() * 8,
+    y: 230 + Math.sin((i / Math.max(data.nodes.length, 1)) * Math.PI * 2) * 150 + Math.random() * 8,
+    vx: 0, vy: 0,
+  }));
+  const index = new Map(graphState.nodes.map((n) => [n.id, n]));
+  graphState.edges = (data.edges || [])
+    .map((e) => ({ ...e, a: index.get(e.source), b: index.get(e.target) }))
+    .filter((e) => e.a && e.b);
+
+  const counts = data.counts || {};
+  $('graph-notice').innerHTML = data.error
+    ? `<strong>${esc(data.error)}</strong>`
+    : `<strong>${data.node_count || 0} nodes, ${data.edge_count || 0} links.</strong>
+       Click any node to re-centre on it. This is a view of the tables you already have —
+       nothing is stored here, so it cannot go stale.
+       ${data.truncated ? '<em>Capped: there is more than is shown.</em>' : ''}`;
+  $('graph-legend').innerHTML = Object.entries(counts)
+    .map(([kind, n]) =>
+      `<span style="color:${GRAPH_COLOURS[kind] || '#999'}">●</span> ${esc(kind)} ${n}`)
+    .join(' &nbsp; ');
+
+  graphState.frame = 0;
+  requestAnimationFrame(stepGraph);
+}
+
+/* A small spring layout: edges pull, every pair pushes, and it cools to a stop. Crude, and
+   crude is enough — the job is to separate clusters enough to read, not to be publishable. */
+function stepGraph() {
+  const canvas = $('graph-canvas');
+  const ratio = window.devicePixelRatio || 1;
+  const width = canvas.clientWidth, height = canvas.clientHeight;
+  if (canvas.width !== width * ratio) {
+    canvas.width = width * ratio;
+    canvas.height = height * ratio;
+  }
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+
+  const nodes = graphState.nodes;
+  if (!nodes.length) {
+    ctx.fillStyle = '#777';
+    ctx.font = '13px system-ui';
+    ctx.fillText('Nothing to draw yet — run a campaign first.', 16, 28);
+    return;
+  }
+
+  if (graphState.frame < 220) {
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const a = nodes[i], b = nodes[j];
+        let dx = b.x - a.x, dy = b.y - a.y;
+        let d2 = dx * dx + dy * dy || 0.01;
+        const push = 2600 / d2;
+        const d = Math.sqrt(d2);
+        a.vx -= (dx / d) * push; a.vy -= (dy / d) * push;
+        b.vx += (dx / d) * push; b.vy += (dy / d) * push;
+      }
+      // Gentle pull to the middle, so disconnected nodes do not drift off screen.
+      nodes[i].vx += (width / 2 - nodes[i].x) * 0.002;
+      nodes[i].vy += (height / 2 - nodes[i].y) * 0.002;
+    }
+    for (const edge of graphState.edges) {
+      const dx = edge.b.x - edge.a.x, dy = edge.b.y - edge.a.y;
+      const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+      const pull = (d - 70) * 0.012;
+      edge.a.vx += (dx / d) * pull; edge.a.vy += (dy / d) * pull;
+      edge.b.vx -= (dx / d) * pull; edge.b.vy -= (dy / d) * pull;
+    }
+    for (const n of nodes) {
+      n.x += (n.vx *= 0.82); n.y += (n.vy *= 0.82);
+      n.x = Math.max(14, Math.min(width - 14, n.x));
+      n.y = Math.max(14, Math.min(height - 14, n.y));
+    }
+    graphState.frame++;
+  }
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+  ctx.lineWidth = 1;
+  for (const edge of graphState.edges) {
+    ctx.beginPath();
+    ctx.moveTo(edge.a.x, edge.a.y);
+    ctx.lineTo(edge.b.x, edge.b.y);
+    ctx.stroke();
+  }
+  ctx.font = '10px system-ui';
+  for (const n of nodes) {
+    const root = n.attrs && n.attrs.root;
+    const r = root ? 9 : n.kind === 'job' ? 5 : 4;
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+    ctx.fillStyle = GRAPH_COLOURS[n.kind] || '#999';
+    ctx.fill();
+    if (root || n.kind === 'skill' || n.kind === 'company' || nodes.length < 45) {
+      ctx.fillStyle = 'rgba(255,255,255,0.66)';
+      ctx.fillText(String(n.label || '').slice(0, 22), n.x + r + 3, n.y + 3);
+    }
+  }
+
+  if (graphState.frame < 220) requestAnimationFrame(stepGraph);
+}
+
+function onGraphClick(event) {
+  const canvas = $('graph-canvas');
+  const box = canvas.getBoundingClientRect();
+  const x = event.clientX - box.left, y = event.clientY - box.top;
+  let best = null, bestDistance = 18 * 18;
+  for (const n of graphState.nodes) {
+    const d = (n.x - x) ** 2 + (n.y - y) ** 2;
+    if (d < bestDistance) { best = n; bestDistance = d; }
+  }
+  // Facts and locations are leaves; re-rooting on one shows a single node and a line.
+  if (best && !['fact', 'location'].includes(best.kind)) drawGraphFor(best.id);
+}
+
+async function loadGraphQuestions() {
+  const [untouched, bridging, reach, people, worked, resumes] = await Promise.all([
+    api('/graph/questions/untouched-companies?limit=8').catch(() => ({ companies: [] })),
+    api('/graph/questions/bridging-skills?limit=8').catch(() => ({ skills: [] })),
+    api('/graph/questions/skill-reach?limit=20').catch(() => ({ skills: [] })),
+    api('/graph/questions/uncontacted-people?limit=12').catch(() => ({ people: [] })),
+    api('/graph/questions/what-worked?limit=10').catch(() => ({ applications: [] })),
+    api('/graph/questions/resume-outcomes?limit=10').catch(() => ({ versions: [] })),
+  ]);
+
+  $('graph-untouched').innerHTML = (untouched.companies || []).length
+    ? `<table><thead><tr><th>Company</th><th class="num">Roles</th>
+         <th class="num">Best</th></tr></thead><tbody>` +
+      untouched.companies.map((c) => `<tr>
+        <td><a href="#graph" onclick="drawGraphFor('company:' + ${JSON.stringify(c.company)}
+          .toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,''))">${esc(c.company)}</a></td>
+        <td class="num">${c.open_roles}</td>
+        <td class="num ${scoreClass(c.best_score)}">${pct(c.best_score)}</td>
+      </tr>`).join('') + '</tbody></table>'
+    : '<p class="body muted">Nothing yet — or you have contacted everyone.</p>';
+
+  $('graph-bridging').innerHTML = (bridging.skills || []).length
+    ? `<table><thead><tr><th>Skill</th><th class="num">Roles it opens</th>
+         <th>Example</th></tr></thead><tbody>` +
+      bridging.skills.map((s) => `<tr>
+        <td>${esc(s.skill)}</td>
+        <td class="num">${s.would_connect_to}</td>
+        <td class="tiny">${esc((s.examples || [])[0] || '')}</td>
+      </tr>`).join('') + '</tbody></table>' +
+      `<p class="body tiny muted">Names that are also ordinary English — "go", "c",
+       "excel" — are left out: "we want you to go beyond" would otherwise read as a Go
+       requirement.</p>`
+    : '<p class="body muted">Not enough scored jobs yet.</p>';
+
+  /* Suppressed people never arrive here, so there is nothing to render carefully around.
+     "Reachable" says a channel exists; it does not say the system may use it, which is why
+     the channel is named rather than shown as a tick. */
+  $('graph-uncontacted').innerHTML = (people.people || []).length
+    ? `<table><thead><tr><th>Person</th><th>Role</th><th>Company</th>
+         <th class="num">Fit</th><th>Reach them by</th></tr></thead><tbody>` +
+      people.people.map((p) => `<tr>
+        <td>${esc(p.name)}${p.hiring_authority ? ' <span class="tiny muted">hires</span>' : ''}</td>
+        <td class="tiny">${esc(p.title || '')}</td>
+        <td><a href="#graph" onclick="drawGraphFor('company:' + ${JSON.stringify(p.company)}
+          .toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,''))">${esc(p.company)}</a></td>
+        <td class="num">${p.relevance}</td>
+        <td class="tiny">${p.reachable ? esc(p.channel || 'linkedin') : 'no channel found'}</td>
+      </tr>`).join('') + '</tbody></table>' +
+      `<p class="body tiny muted">${esc(people.note || '')}` +
+      (people.suppressed_skipped
+        ? ` ${people.suppressed_skipped} person/people are on your do-not-contact list and
+            are not shown.`
+        : '') + '</p>'
+    : `<p class="body muted">${esc(people.note || 'Nobody discovered yet.')}</p>`;
+
+  /* A rejection is in this table on purpose: it is evidence the application was read,
+     which is exactly what silence is not. */
+  $('graph-worked').innerHTML = (worked.applications || []).length
+    ? `<table><thead><tr><th>Role</th><th>Company</th><th>Outcome</th>
+         <th>Wrote first</th></tr></thead><tbody>` +
+      worked.applications.map((a) => `<tr>
+        <td class="tiny">${esc(a.job || '')}</td>
+        <td>${esc(a.company || '')}</td>
+        <td>${esc(a.status)}</td>
+        <td class="tiny">${a.outreach_first ? 'yes' : 'no'}</td>
+      </tr>`).join('') + '</tbody></table>' +
+      `<p class="body tiny muted">${esc(worked.note || '')}</p>`
+    : `<p class="body muted">${esc(worked.note || '')}</p>`;
+
+  /* `rate === null` is printed as a dash and a reason, never as 0% and never rounded up
+     from one application. A perfect record across one send is the weakest evidence here. */
+  $('graph-resumes').innerHTML = (resumes.versions || []).length
+    ? `<table><thead><tr><th>Version</th><th class="num">Sent</th>
+         <th class="num">Replies</th><th class="num">Rate</th></tr></thead><tbody>` +
+      resumes.versions.map((v) => `<tr>
+        <td class="tiny">${esc(String(v.resume_render_id).slice(0, 8))}</td>
+        <td class="num">${v.submitted}</td>
+        <td class="num">${v.responded}</td>
+        <td class="num" title="${esc(v.note || '')}">${v.rate === null ? '—' : pct(v.rate)}</td>
+      </tr>`).join('') + '</tbody></table>' +
+      `<p class="body tiny muted">${esc(resumes.note || '')}</p>`
+    : `<p class="body muted">${esc(resumes.note || '')}</p>`;
+
+  $('graph-reach').innerHTML = (reach.skills || []).length
+    ? `<table><thead><tr><th>Skill</th><th class="num">Jobs</th><th class="num">Share</th>
+         <th>Note</th></tr></thead><tbody>` +
+      reach.skills.map((s) => `<tr>
+        <td><a href="#graph" onclick="drawGraphFor('skill:' + ${JSON.stringify(s.skill)}
+          .replace(/[^a-z0-9]+/g,'-'))">${esc(s.skill)}</a></td>
+        <td class="num">${s.reach}</td>
+        <td class="num">${(s.share * 100).toFixed(1)}%</td>
+        <td class="tiny muted">${esc(s.note || '')}</td>
+      </tr>`).join('') + '</tbody></table>'
+    : '';
+}
+
+/* The supervisor. One goal in, a chosen path out.
+
+   `submitted` is rendered explicitly rather than left to be inferred: the whole point of
+   the design is that nothing was sent, and a reader should not have to work that out from
+   the absence of a message. */
+async function loadGoal() {
+  const button = $('goal-run');
+  if (!button.dataset.wired) {
+    button.dataset.wired = '1';
+    button.addEventListener('click', runGoal);
+    const steps = await api('/supervisor/steps').catch(() => null);
+    if (steps) {
+      $('goal-status').innerHTML =
+        `<strong>Steps it can choose from:</strong> ${steps.steps.map(esc).join(' · ')}.
+         <strong>It cannot:</strong> ${steps.cannot.map(esc).join('; ')}.`;
+    }
+  }
+}
+
+async function runGoal() {
+  const text = $('goal-text').value.trim();
+  if (!text || text.length < 8) {
+    $('goal-status').textContent = 'Say what you want in a sentence.';
+    return;
+  }
+  const button = $('goal-run');
+  button.disabled = true;
+  button.textContent = 'Working…';
+  $('goal-plan').innerHTML = '<p class="body muted">Deciding…</p>';
+  $('goal-history').innerHTML = '';
+  $('goal-outcome').innerHTML = '';
+
+  let result;
+  try {
+    result = await post('/supervisor/run', {
+      goal: text,
+      max_steps: Number($('goal-steps').value) || 6,
+      dry_run: $('goal-dry').checked,
+    });
+  } catch (error) {
+    $('goal-outcome').innerHTML = `<p class="body s-mid">${esc(error.message)}</p>`;
+    return;
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Run';
+  }
+
+  /* `chosen_by` matters: a step picked by the model is a judgement, a step picked by the
+     fixed order is what happens when the model could not be reached. Conflating them
+     would overstate how much thinking went into the run. */
+  $('goal-plan').innerHTML = (result.plan || []).length
+    ? `<table><thead><tr><th>#</th><th>Step</th><th>Chosen by</th><th>Why</th></tr></thead><tbody>` +
+      result.plan.map((entry, i) => `<tr>
+        <td class="num">${i + 1}</td>
+        <td>${esc(entry.step)}</td>
+        <td class="tiny ${entry.chosen_by === 'model' ? '' : 'muted'}">${esc(entry.chosen_by || 'model')}</td>
+        <td class="tiny">${esc(entry.reason || '')}</td>
+      </tr>`).join('') + '</tbody></table>'
+    : '<p class="body muted">It chose no steps.</p>';
+
+  $('goal-history').innerHTML = (result.history || []).length
+    ? `<table><thead><tr><th>Step</th><th>Result</th></tr></thead><tbody>` +
+      result.history.map((entry) => `<tr>
+        <td>${esc(entry.step)}</td>
+        <td class="tiny">${esc(JSON.stringify(entry.result ?? {}).slice(0, 400))}</td>
+      </tr>`).join('') + '</tbody></table>'
+    : '';
+
+  const parked = (result.awaiting_approval || []).length;
+  $('goal-outcome').innerHTML = `
+    <p><strong>${esc(result.summary || '')}</strong></p>
+    <p class="tiny">Steps taken: ${result.steps_taken} ·
+       Queued: ${(result.shortlisted || []).length} ·
+       Prepared: ${(result.prepared || []).length} ·
+       <strong>Submitted: ${result.submitted}</strong></p>
+    <p class="tiny">${esc(result.note || '')}</p>
+    ${parked ? `<p class="tiny"><a href="#queue">Review the ${parked} waiting application(s)</a></p>` : ''}
+    ${result.error ? `<p class="tiny s-mid">${esc(result.error)}</p>` : ''}`;
+
+  if (parked) loaders.queue?.();
+}
+
+/* The decision trail. Reads only — an endpoint that could edit a recorded decision
+   would make the whole record worthless as an explanation. */
+async function loadWhy() {
+  const filter = $('why-agent-filter');
+  const [summary, status] = await Promise.all([
+    api('/decisions/summary').catch(() => ({ agents: [], total: 0 })),
+    api('/status').catch(() => ({})),
+  ]);
+
+  if (!filter.dataset.ready) {
+    filter.dataset.ready = '1';
+    filter.addEventListener('change', loadWhy);
+  }
+  const chosen = filter.value;
+  filter.innerHTML = ['<option value="">every agent</option>'].concat(
+    (summary.agents || []).map((a) =>
+      `<option value="${esc(a.agent)}"${a.agent === chosen ? ' selected' : ''}>${esc(a.agent)}</option>`)
+  ).join('');
+
+  $('why-notice').innerHTML = summary.total
+    ? `<strong>${summary.total} recorded decisions.</strong> The activity feed says what
+       happened; this says why — the evidence each agent had, the tools it used, and how
+       sure it was. Nothing here can be edited, including by the agent that wrote it.`
+    : `<strong>No decisions recorded yet.</strong> Run a campaign or prepare an
+       application and this fills in. It is written as decisions are made, not
+       reconstructed afterwards.`;
+
+  $('why-agents').innerHTML = (summary.agents || []).length
+    ? `<table><thead><tr><th>Agent</th><th class="num">Decisions</th>
+         <th class="num">Avg confidence</th></tr></thead><tbody>` +
+      summary.agents.map((a) => `<tr>
+        <td>${esc(a.agent)}</td>
+        <td class="num">${a.decisions}</td>
+        <td class="num ${scoreClass(a.avg_confidence)}">${pct(a.avg_confidence)}</td>
+      </tr>`).join('') + '</tbody></table>'
+    : '<p class="body muted">Nothing yet.</p>';
+
+  /* Whether parked approvals survive a restart is the one thing on this page that is
+     about the future rather than the past, and it is the thing most likely to be
+     assumed rather than checked. */
+  const cp = status.checkpoints || {};
+  $('why-durability').innerHTML = `
+    <p><strong>${cp.durable ? 'Durable' : 'In memory only'}</strong>
+       — ${esc(cp.backend || 'unknown')}</p>
+    <p class="tiny">${esc(cp.note || '')}</p>
+    ${cp.error ? `<p class="tiny s-mid">${esc(cp.error)}</p>` : ''}`;
+
+  const decisions = await api(
+    '/decisions?limit=60' + (filter.value ? `&agent=${encodeURIComponent(filter.value)}` : '')
+  ).catch(() => ({ decisions: [] }));
+
+  $('why-decisions').innerHTML = (decisions.decisions || []).length
+    ? `<table><thead><tr><th>When</th><th>Agent</th><th>Decided</th>
+         <th class="num">Confidence</th><th>Because</th></tr></thead><tbody>` +
+      decisions.decisions.map((d) => `<tr>
+        <td class="tiny">${esc(String(d.at).replace('T', ' ').slice(0, 19))}</td>
+        <td>${esc(d.agent)}</td>
+        <td>${esc(d.decision)}</td>
+        <td class="num ${scoreClass(d.confidence)}">${d.confidence ? pct(d.confidence) : '–'}</td>
+        <td class="tiny">${esc(d.outcome || '')}
+          ${(d.tools_used || []).length
+            ? `<br><span class="muted">via ${esc(d.tools_used.join(', '))}</span>` : ''}
+          ${d.model ? `<br><span class="muted">${esc(d.model)}</span>` : ''}</td>
+      </tr>`).join('') + '</tbody></table>'
+    : '<p class="body muted">Nothing recorded for this filter.</p>';
+}
+
+async function loadAnalytics() {
+  const dimensionSelect = $('dimension');
+  if (!dimensionSelect.options.length) {
+    const dimensions = await api('/analytics/dimensions').catch(() => ['role']);
+    dimensionSelect.innerHTML = dimensions.map((d) =>
+      `<option value="${d}"${d === 'role' ? ' selected' : ''}>${d}</option>`).join('');
+    dimensionSelect.addEventListener('change', loadAnalytics);
+  }
+
+  const [funnel, rates, costs, breakdown, resumePerf, learning] = await Promise.all([
+    api('/analytics/funnel').catch(() => ({ stages: [] })),
+    api('/analytics/rates').catch(() => ({})),
+    api('/analytics/costs').catch(() => ({})),
+    api(`/analytics/by-dimension?dimension=${dimensionSelect.value}`).catch(() => ({ groups: [] })),
+    api('/analytics/resume-performance').catch(() => ({ archetypes: [] })),
+    api('/learning/observations').catch(() => ({ observations: [] })),
+  ]);
+
+  $('analytics-notice').innerHTML =
+    `<strong>Every rate here carries its sample size.</strong> Below
+     ${rates.min_sample ?? 8} submissions a percentage is withheld and the raw fraction
+     shown instead — "0% over three applications" is noise, and rendered as a percentage
+     it would change how you spend a month.`;
+
+  const top = Math.max(...(funnel.stages || []).map((s) => s.count), 1);
+  $('funnel').innerHTML = (funnel.stages || []).map((stage) => `<div class="bar">
+      <span class="name">${esc(stage.stage)}</span>
+      <span class="track"><span class="fill" style="width:${(stage.count / top * 100).toFixed(1)}%">
+        </span></span>
+      <span class="val">${stage.count}${stage.from_previous
+        ? ` <span class="tiny">${pct(stage.from_previous)}</span>` : ''}</span>
+    </div>`).join('') || '<span class="muted">no data</span>';
+
+  $('rates').innerHTML = ['response', 'interview', 'offer'].map((key) => {
+    const rate = rates[key];
+    return `<div class="bar"><span class="name">${key}</span>
+      <span class="val" style="flex:1;text-align:left">${rateText(rate)}</span></div>`;
+  }).join('') + `<p class="tiny">${esc(rates.note || '')}</p>`;
+
+  $('costs').innerHTML = costs.calls
+    ? `<div class="stats" style="padding:0 0 10px">
+        <div class="stat"><b>$${(costs.total_usd ?? 0).toFixed(4)}</b>
+          <span>${costs.window_days}d total</span></div>
+        <div class="stat"><b>${costs.calls}</b><span>calls</span></div>
+        <div class="stat"><b>${pct(costs.cache_hit_rate)}</b><span>cached</span></div>
+        <div class="stat"><b>${costs.cost_per_application_usd
+          ? '$' + costs.cost_per_application_usd.toFixed(4) : '–'}</b>
+          <span>per application</span></div>
+      </div>
+      <table><thead><tr><th>Agent</th><th>Calls</th><th>Cost</th></tr></thead><tbody>
+      ${Object.entries(costs.by_agent || {}).map(([agent, info]) =>
+        `<tr><td>${esc(agent)}</td><td class="num">${info.calls}</td>
+         <td class="num">$${info.cost_usd.toFixed(5)}</td></tr>`).join('')}</tbody></table>`
+    : '<span class="muted">No LLM calls recorded. Everything so far ran deterministically.</span>';
+
+  $('breakdown').innerHTML = breakdown.groups?.length
+    ? `<table><thead><tr><th>${esc(breakdown.dimension)}</th><th>Applications</th>
+        <th>Submitted</th><th>Responses</th><th>Response rate</th></tr></thead><tbody>
+      ${breakdown.groups.map((g) => `<tr>
+        <td>${esc(g.key)}</td><td class="num">${g.applications}</td>
+        <td class="num">${g.submitted}</td><td class="num">${g.responses}</td>
+        <td class="num">${rateText(g.response)}</td></tr>`).join('')}</tbody></table>`
+    : '<p class="body muted">No applications yet.</p>';
+
+  $('resume-perf').innerHTML = resumePerf.archetypes?.length
+    ? `<table><thead><tr><th>Archetype</th><th>Renders</th><th>Avg ATS</th>
+        <th>Avg evidence</th><th>Submitted</th><th>Response</th></tr></thead><tbody>
+      ${resumePerf.archetypes.map((a) => `<tr>
+        <td>${esc(a.archetype)}</td><td class="num">${a.renders}</td>
+        <td class="num">${pct(a.avg_ats_score)}</td>
+        <td class="num">${pct(a.avg_evidence_integrity)}</td>
+        <td class="num">${a.submitted}</td><td class="num">${rateText(a.response)}</td>
+      </tr>`).join('')}</tbody></table>`
+    : '<p class="body muted">No resumes generated yet.</p>';
+
+  $('learning').innerHTML = `<ul class="list">${(learning.observations || []).map((o) =>
+    `<li>${esc(o.text)}</li>`).join('')}</ul>`;
+}
+
+$('propose-btn').addEventListener('click', async () => {
+  const button = $('propose-btn');
+  button.disabled = true;
+  try {
+    const p = await post('/learning/propose');
+    openModal(`<header><h1>Proposed ranking change</h1>
+        <span class="pill">${esc(p.confidence)} confidence · n=${p.sample_size}</span>
+        <button class="ghost small" style="margin-left:auto" onclick="closeModal()">Close</button>
+      </header><div class="body">
+      <p>${esc(p.observation)}</p>
+      ${p.diff?.length ? `<table><thead><tr><th>Weight</th><th>From</th><th>To</th>
+        <th>Delta</th></tr></thead><tbody>${p.diff.map((d) => `<tr>
+          <td>${esc(d.key)}</td><td class="num">${d.from}</td><td class="num">${d.to}</td>
+          <td class="num">${d.delta > 0 ? '+' : ''}${d.delta}</td></tr>`).join('')}
+        </tbody></table>` : '<p class="muted">Nothing to change.</p>'}
+      ${p.rationale ? `<p class="tiny" style="margin-top:12px">${esc(p.rationale)}</p>` : ''}
+      <div class="notice" style="margin-top:14px">${esc(p.note || '')}</div>
+      ${p.actionable ? `<button class="small" data-applyproposal="${esc(p.proposal_id)}">
+        Apply it</button>` : ''}
+      </div>`);
+  } catch (error) { alert(error.message); }
+  finally { button.disabled = false; }
+});
+
+$('modal').addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-applyproposal]');
+  if (!button) return;
+  if (!confirm('Change your ranking weights? Existing scores keep the version that made them.'))
+    return;
+  try {
+    const data = await post(`/learning/proposals/${button.dataset.applyproposal}/apply?confirm=true`);
+    alert(`Applied as version ${data.weights_version}. ${data.note}`);
+    closeModal();
+  } catch (error) { alert(error.message); }
+});
+
+// ─── Settings ───────────────────────────────────────────────────────────────
+
+async function loadSettings() {
+  const [autonomy, llm, weights, providers] = await Promise.all([
+    api('/settings/autonomy').catch(() => null),
+    api('/settings/llm').catch(() => null),
+    api('/settings/weights').catch(() => null),
+    api('/providers').catch(() => []),
+  ]);
+
+  if (autonomy) {
+    $('autonomy').innerHTML = `
+      <label for="level">Level</label>
+      <select id="level">${Object.entries(autonomy.levels).map(([value, label]) =>
+        `<option value="${value}"${+value === autonomy.level ? ' selected' : ''}>
+          ${value} — ${esc(label)}</option>`).join('')}</select>
+      <div class="row" style="margin-top:12px">
+        <div><label for="threshold">Auto-submit threshold</label>
+          <input type="number" id="threshold" step="0.01" min="0.5" max="1"
+                 value="${autonomy.auto_submit_threshold}"></div>
+        <div><label for="cap">Daily application cap</label>
+          <input type="number" id="cap" min="1" max="100"
+                 value="${autonomy.daily_application_cap}"></div>
+      </div>
+      <button class="full" id="save-autonomy">Save for this session</button>
+      <h3>Always human, at every level</h3>
+      <ul class="list cyan">${autonomy.hard_stops.map((s) =>
+        `<li>${esc(s)}</li>`).join('')}</ul>
+      <p class="tiny">${esc(autonomy.note)}</p>`;
+    $('save-autonomy').addEventListener('click', async () => {
+      try {
+        const data = await put('/settings/autonomy', {
+          level: +$('level').value,
+          auto_submit_threshold: +$('threshold').value,
+          daily_application_cap: +$('cap').value,
+        });
+        alert(`Autonomy ${data.level}. ${data.note}`);
+        loadStatus();
+      } catch (error) { alert(error.message); }
+    });
+  }
+
+  if (llm) {
+    $('llm-settings').innerHTML = `
+      <div class="chips">${Object.entries(llm.providers).map(([name, info]) =>
+        `<span class="chip ${info.configured ? 'good' : ''}">${esc(name)}
+          ${info.configured ? '✓' : '–'}</span>`).join('')}</div>
+      <dl class="kv" style="margin-top:14px">
+        <dt>Cheap chain</dt><dd class="tiny">${llm.chains.cheap.map(esc).join('<br>')}</dd>
+        <dt>Usable now</dt><dd class="tiny">${llm.usable_now.cheap.map(esc).join('<br>') ||
+          'none'}</dd>
+        <dt>Strong chain</dt><dd class="tiny">${llm.chains.strong.map(esc).join('<br>')}</dd>
+        <dt>Budget today</dt><dd>$${llm.budget.spent_today_usd.toFixed(4)} of
+          $${llm.budget.daily_limit_usd.toFixed(2)}</dd>
+        <dt>Embeddings</dt><dd class="tiny">${esc(llm.embedding_model)} (on device)</dd>
+      </dl>
+      <p class="tiny">${esc(llm.note)}</p>`;
+  }
+
+  if (weights) {
+    $('weights').innerHTML = `
+      <p class="muted">Version ${weights.version} · ${esc(weights.rationale)}</p>
+      <table><thead><tr><th>Component</th><th>Weight</th><th>What it measures</th></tr></thead>
+      <tbody>${Object.entries(weights.weights).map(([key, value]) => `<tr>
+        <td>${esc(key)}</td>
+        <td><input type="number" step="0.01" min="0" max="1" value="${value}"
+                   data-weight="${esc(key)}" style="width:90px"></td>
+        <td class="tiny">${esc(weights.components[key] || '')}</td></tr>`).join('')}</tbody></table>
+      <button class="full" id="save-weights">Save as a new version</button>
+      <p class="tiny">${esc(weights.note)}</p>`;
+    $('save-weights').addEventListener('click', async () => {
+      const payload = {};
+      for (const input of document.querySelectorAll('[data-weight]'))
+        payload[input.dataset.weight] = +input.value;
+      try {
+        const data = await put('/settings/weights', { weights: payload, rationale: 'set by hand' });
+        alert(`Saved as version ${data.version}.`);
+        loadSettings();
+      } catch (error) { alert(error.message); }
+    });
+  }
+
+  $('providers').innerHTML = `<table><thead><tr><th>Platform</th><th>Method</th>
+      <th>Empty means exists</th></tr></thead><tbody>
+    ${providers.map((p) => `<tr><td>${esc(p.label)}</td>
+      <td class="tiny">${esc(p.method)}</td>
+      <td class="tiny">${p.empty_means_exists ? 'yes — a wrong slug looks like no openings'
+        : 'no'}</td></tr>`).join('')}</tbody></table>`;
+}
+
+// ─── Live activity ──────────────────────────────────────────────────────────
+
+function logLine(event) {
+  const log = $('log');
+  if (log.firstElementChild?.classList.contains('muted')) log.innerHTML = '';
+  const time = new Date(event.at || Date.now()).toLocaleTimeString();
+  const row = document.createElement('div');
+  row.className = 'l-' + (event.level || 'info');
+  row.innerHTML = `<time>${esc(time)}</time><span>${esc(event.message || event.type)}</span>`;
+  log.append(row);
+  while (log.children.length > 300) log.firstElementChild.remove();
+  log.scrollTop = log.scrollHeight;
+}
+
+function connectStream() {
+  const source = new EventSource(`${API}/events/stream`);
+  source.onopen = () => { $('sse-state').textContent = 'live'; };
+  source.onerror = () => { $('sse-state').textContent = 'reconnecting…'; };
+  source.onmessage = (message) => {
+    try { logLine(JSON.parse(message.data)); } catch { /* keep the feed alive */ }
+  };
+  // Named events arrive with their own type, so listen on the wildcard too.
+  for (const type of ['RUN_STARTED', 'RUN_FINISHED', 'JOB_SCORED', 'JOB_ANALYZED',
+    'ATS_BOARD_DISCOVERED', 'COMPANY_ANALYZED', 'RESUME_GENERATED', 'RESUME_TAILORING_STARTED',
+    'EVIDENCE_REJECTED', 'APPLICATION_STARTED', 'ATS_DETECTED', 'FORM_FIELD_DETECTED',
+    'PRESUBMIT_HELD', 'HUMAN_APPROVAL_REQUIRED', 'APPLICATION_SUBMITTED',
+    'APPLICATION_UNVERIFIED', 'APPLICATION_FAILED', 'JOB_DUPLICATE', 'JOB_SHORTLISTED',
+    'JOB_REJECTED', 'OUTREACH_DRAFTED', 'OUTREACH_APPROVED', 'OUTREACH_SENT', 'ERROR']) {
+    source.addEventListener(type, (message) => {
+      try { logLine(JSON.parse(message.data)); } catch { /* ignore */ }
+    });
+  }
+}
+
+async function loadRecentEvents() {
+  const events = await api('/events/recent?limit=60').catch(() => []);
+  for (const event of events.reverse()) logLine(event);
+}
+
+// ─── Boot ───────────────────────────────────────────────────────────────────
+
+buildNav();
+wireUpload();
+wireSearch();
+$('jobs-refresh').addEventListener('click', loadJobs);
+$('job-priority').addEventListener('change', loadJobs);
+$('queue-refresh').addEventListener('click', loadQueue);
+$('board-refresh').addEventListener('click', loadTracker);
+$('renders-refresh').addEventListener('click', loadResumes);
+$('companies-refresh').addEventListener('click', loadCompanies);
+$('outreach-refresh').addEventListener('click', loadOutreach);
+$('research-btn').addEventListener('click', async () => {
+  const button = $('research-btn');
+  button.disabled = true;
+  button.innerHTML = '<span class="spinner"></span> Reading websites…';
+  try {
+    const data = await post('/companies/research/pending?limit=10');
+    alert(`Researched ${data.researched} company website(s).`);
+    loadCompanies(); loadStatus();
+  } catch (error) { alert(error.message); }
+  finally { button.disabled = false; button.textContent = 'Research 10 more'; }
+});
+
+(async () => {
+  await loadStatus();
+  await loadSegments();
+  await loadRecentEvents();
+  connectStream();
+  const hash = location.hash.slice(1);
+  show(PAGES.some(([id]) => id === hash) ? hash : 'campaign');
+  setInterval(loadStatus, 30000);
+})();
+</script>
+</body>
+</html>

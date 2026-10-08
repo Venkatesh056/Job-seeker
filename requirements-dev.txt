@@ -1,0 +1,29 @@
+# AI Career Agent — development and test dependencies
+#
+#   pip install -r requirements-dev.txt      (pulls in requirements.txt too)
+
+-r requirements.txt
+
+
+# ─── Test framework ─────────────────────────────────────────────────────────
+pytest==9.1.1
+pytest-asyncio==1.4.0
+pytest-cov==7.1.0
+pytest-timeout==2.4.0             # a hung network call must fail the suite, not stall it
+
+# ─── Test doubles + fixtures ────────────────────────────────────────────────
+respx==0.23.1                     # mock httpx — ATS feed parsers tested against
+                                  # captured API responses, no live calls in CI
+faker==40.38.0                    # synthetic candidate data; real PII never enters fixtures
+freezegun==1.5.5                  # job freshness and follow-up date logic
+
+# ─── Browser testing ────────────────────────────────────────────────────────
+# Adapter tests replay recorded, PII-scrubbed form fixtures offline. The oracle
+# asserts finalActionActivations == 0 — i.e. the submit control was never activated.
+# See docs/01-architecture.md §7.
+pytest-playwright==0.9.0
+
+# ─── Lint + types ───────────────────────────────────────────────────────────
+ruff==0.16.7                      # lint + format
+mypy==2.3.1
+types-python-dateutil==2.9.0.20260807

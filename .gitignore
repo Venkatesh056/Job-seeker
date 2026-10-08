@@ -1,0 +1,11 @@
+# ─── Secrets ────────────────────────────────────────────────────────────────
+# .env holds real API keys. .env.example is the committed template and must
+# only ever contain placeholders.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+og_gitignore.doc

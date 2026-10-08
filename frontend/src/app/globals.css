@@ -1,0 +1,219 @@
+@import "tailwindcss";
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Design tokens
+
+   The organising idea of this interface: **it must never look more certain than
+   the data behind it.**
+
+   The backend is built on "Unknown ≠ Zero" — every score carries a confidence, an
+   evidence coverage and a list of fields nobody could measure. A dashboard that
+   renders all of that as one solid bar is a dashboard that lies politely. So
+   confidence is a first-class part of the palette here, not an afterthought:
+   `--known` and `--unknown` are used everywhere a measurement is drawn, and the
+   unknown portion is always *visible* rather than absent.
+
+   Dark only, deliberately. This is an instrument panel that sits open on a second
+   monitor for hours; a light theme would be a second set of decisions to keep right
+   for no benefit anybody asked for.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@theme {
+  /* Ink. Not black — a cold near-black with a trace of blue, so the accent reads
+     as light rather than as paint. */
+  --color-ink-950: #070810;
+  --color-ink-900: #0b0d16;
+  --color-ink-850: #10131f;
+  --color-ink-800: #151927;
+  --color-ink-700: #1d2232;
+  --color-ink-600: #272d40;
+  --color-ink-500: #363d54;
+
+  --color-chalk: #e8eaf2;
+  --color-chalk-dim: #9aa2bd;
+  --color-chalk-faint: #646c88;
+
+  /* One accent, used sparingly enough that it still means something. */
+  --color-signal: #6ea8ff;
+  --color-signal-deep: #3d6fd4;
+  --color-signal-glow: #8fbcff;
+
+  /* Semantics. Muted on purpose: a dashboard where everything shouts is a
+     dashboard where nothing does. */
+  --color-verdant: #55c57a;
+  --color-amber: #e0a33a;
+  --color-rust: #e06c5f;
+  --color-violet: #a684e8;
+  --color-teal: #4fc3c0;
+
+  /* Measurement. The whole thesis, in two colours. */
+  --color-known: #6ea8ff;
+  --color-unknown: #2b3244;
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", monospace;
+
+  --radius-panel: 14px;
+
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ─── Base ──────────────────────────────────────────────────────────────── */
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--color-ink-950);
+  color: var(--color-chalk);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Two very large, very dim radial washes. They do almost nothing individually and
+   together they stop a full-screen dark app from reading as a flat rectangle. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(900px 600px at 12% -5%, rgba(110, 168, 255, 0.07), transparent 60%),
+    radial-gradient(700px 500px at 95% 8%, rgba(166, 132, 232, 0.05), transparent 60%);
+}
+
+::selection {
+  background: rgba(110, 168, 255, 0.28);
+}
+
+/* Scrollbars that belong to the room they are in. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-ink-600) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-ink-600);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--color-ink-500);
+  background-clip: content-box;
+}
+
+/* ─── Surfaces ──────────────────────────────────────────────────────────── */
+
+@utility panel {
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--color-ink-850) 96%, white),
+    var(--color-ink-900)
+  );
+  border: 1px solid var(--color-ink-700);
+  border-radius: var(--radius-panel);
+  position: relative;
+}
+
+/* A one-pixel highlight along the top edge. It is the difference between a box
+   and a surface with a light above it. */
+@utility panel-lit {
+  &::after {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 1px;
+    border-radius: var(--radius-panel) var(--radius-panel) 0 0;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(255, 255, 255, 0.09) 20%,
+      rgba(255, 255, 255, 0.09) 80%,
+      transparent
+    );
+    pointer-events: none;
+  }
+}
+
+@utility hairline {
+  border-color: var(--color-ink-700);
+}
+
+/* ─── Measurement ───────────────────────────────────────────────────────── */
+
+/* The hatch that marks unmeasured ground. Used behind every score bar so the
+   portion nobody could measure is visibly *there* rather than simply missing —
+   an empty track reads as "zero", which is the exact confusion this system spent
+   three separate bugs learning to avoid. */
+@utility hatched {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    var(--color-unknown) 0 3px,
+    transparent 3px 7px
+  );
+}
+
+/* ─── Motion ────────────────────────────────────────────────────────────── */
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgba(110, 168, 255, 0.4);
+  }
+  70% {
+    box-shadow: 0 0 0 7px rgba(110, 168, 255, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(110, 168, 255, 0);
+  }
+}
+
+@utility rise-in {
+  animation: rise 0.5s var(--ease-out-quint) both;
+}
+
+@utility live-dot {
+  animation: pulse-ring 2.4s ease-out infinite;
+}
+
+/* Everything here is decoration on top of a page that already works. Anybody who
+   has asked not to see motion gets the page without it. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

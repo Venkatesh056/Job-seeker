@@ -1,0 +1,64 @@
+<!doctype html>
+<!--
+  A minimal application form where every required field is answerable from a Fact Bank.
+
+  Captured shape: Lever-style single-page form, no demographics, no sponsorship
+  question, no free-text screening question. captureMonth: 2026-09.
+
+  It exists to exercise the one path the Greenhouse fixture cannot reach: a form that
+  the agent can complete entirely, so the approval interrupt is actually hit. The
+  Greenhouse fixture deliberately contains unanswerable fields and therefore always
+  routes to "a human is required" — which is correct, and is why a second fixture is
+  needed rather than a weakened first one.
+
+  The submit control carries the same tripwire as every other fixture: the browser
+  tests assert it is never activated except on the explicit submit path.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Apply — Data Scientist — Acme (fixture)</title>
+</head>
+<body class="lever-application" data-qa="application-form">
+<h1>Apply for Data Scientist</h1>
+
+<form id="application-form" action="javascript:void(0)" method="post">
+  <label for="first">First Name *</label>
+  <input id="first" name="first_name" type="text" required>
+
+  <label for="last">Last Name *</label>
+  <input id="last" name="last_name" type="text" required>
+
+  <label for="email">Email *</label>
+  <input id="email" name="email" type="email" required>
+
+  <label for="phone">Phone</label>
+  <input id="phone" name="phone" type="tel">
+
+  <label for="resume">Resume/CV *</label>
+  <input id="resume" name="resume" type="file" required>
+
+  <label for="linkedin">LinkedIn Profile</label>
+  <input id="linkedin" name="linkedin" type="url">
+
+  <label for="github">GitHub URL</label>
+  <input id="github" name="github" type="url">
+
+  <button id="submit-app" type="submit">Submit Application</button>
+</form>
+
+<script>
+  // Tripwire. The browser suite asserts this stays at 0 on every path that must not
+  // submit; the fixture records the activation rather than navigating anywhere.
+  window.finalActionActivations = 0;
+  document.getElementById('submit-app').addEventListener('click', function (event) {
+    event.preventDefault();
+    window.finalActionActivations += 1;
+    document.body.insertAdjacentHTML(
+      'beforeend',
+      '<p id="confirmation">Thank you for applying. Your application has been received.</p>'
+    );
+  });
+</script>
+</body>
+</html>
